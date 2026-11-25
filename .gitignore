@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*$py.class
+dist/
+*.zip
+.DS_Store
+*.blend1
+*.blend2
+.vscode/
+.idea/
+.pytest_cache/
