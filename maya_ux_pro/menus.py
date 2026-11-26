@@ -40,6 +40,7 @@ class VIEW3D_MT_maya_component_pie(bpy.types.Menu):
         else:
             col = pie.box().column(align=True)
             col.operator("object.shade_smooth", text="Shade Smooth", icon="SHADING_RENDERED")
+            col.operator("object.shade_auto_smooth", text="Shade Auto Smooth", icon="MOD_SMOOTH")
             col.operator("object.shade_flat", text="Shade Flat", icon="SHADING_SOLID")
             col.separator()
             col.operator("view3d.view_selected", text="Frame Selected (F)", icon="ZOOM_SELECTED")

@@ -5,7 +5,7 @@
 **Authentic Autodesk Maya workflow inside Blender 4.2 – 5.3+ — Spacebar Floating Hotbox, Smart Middle-Mouse Transform, Face Center-Only Selection, Poly Count HUD, Hold-`D` Pivot & Snap, Retopo & CamTools Pro.**
 
 [![Blender](https://img.shields.io/badge/Blender-4.2%20--%205.3%2B-orange?logo=blender)](https://www.blender.org/)
-[![Version](https://img.shields.io/badge/Release-v2.5.4-blue)](https://github.com/GiorgioDeAngelis/maya-ux-pro-blender/releases/latest)
+[![Version](https://img.shields.io/badge/Release-v2.5.5-blue)](https://github.com/GiorgioDeAngelis/maya-ux-pro-blender/releases/latest)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-green.svg)](./LICENSE)
 [![Platforms](https://img.shields.io/badge/OS-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](#platform-profiles-macos--windowslinux)
 [![Tests](https://img.shields.io/badge/Headless%20Tests-16%2F16%20Passing-brightgreen)](./CONTRIBUTING.md)
@@ -27,12 +27,12 @@ Switching from Autodesk Maya to Blender is slowed down by more than a few keybin
 ## Quick Installation (30 Seconds)
 
 ### Option A — Drag & Drop (Easiest, Blender 4.2+)
-1. Download **`maya_ux_pro-2.5.4.zip`** from the [**Latest GitHub Release**](https://github.com/GiorgioDeAngelis/maya-ux-pro-blender/releases/latest/download/maya_ux_pro-2.5.4.zip).
+1. Download **`maya_ux_pro-2.5.5.zip`** from the [**Latest GitHub Release**](https://github.com/GiorgioDeAngelis/maya-ux-pro-blender/releases/latest/download/maya_ux_pro-2.5.5.zip).
 2. Open Blender and **drag & drop** the `.zip` file directly into the Blender window.
 3. Click **OK** in the install dialog — the extension enables automatically.
 
 ### Option B — Install from Disk
-1. Download `maya_ux_pro-2.5.4.zip` from [Releases](https://github.com/GiorgioDeAngelis/maya-ux-pro-blender/releases/latest).
+1. Download `maya_ux_pro-2.5.5.zip` from [Releases](https://github.com/GiorgioDeAngelis/maya-ux-pro-blender/releases/latest).
 2. In Blender open **Edit → Preferences → Get Extensions** (top-right `⌄` menu) → **Install from Disk...**.
 3. Select the downloaded `.zip` and ensure **Maya UX Pro** is checked.
 

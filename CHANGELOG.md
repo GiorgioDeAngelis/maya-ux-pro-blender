@@ -2,6 +2,10 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.5.5] - 2026-11-26
+### Added
+- **`Shade Auto Smooth` in Object Mode RMB Marking Menu & Hotbox**: added `Shade Auto Smooth` (`object.shade_auto_smooth`) alongside `Shade Smooth` and `Shade Flat` in the Object Mode Right-Click Marking Menu (`VIEW3D_MT_maya_component_pie`) and Spacebar Floating Hotbox (`Modeling & Pivot`).
+
 ## [2.5.4] - 2026-11-26
 ### Added
 - **Object Mode `Shade Smooth` & `Shade Flat` in Viewport RMB Marking Menu**: added `Shade Smooth` (`object.shade_smooth`) and `Shade Flat` (`object.shade_flat`) directly inside the Object Mode Right-Click (`RMB`) Marking Menu (`VIEW3D_MT_maya_component_pie`, grouped above `Frame Selected (F)`) and in the Spacebar **Floating Maya Hotbox** (`Modeling & Pivot`).

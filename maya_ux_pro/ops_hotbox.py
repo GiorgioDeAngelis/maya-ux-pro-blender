@@ -392,8 +392,9 @@ class MAYA_UX_OT_hotbox_popup(bpy.types.Operator):
         rs.operator("maya_ux.smooth_preview", text="2 Cage").level = 2
         rs.operator("maya_ux.smooth_preview", text="3 Smooth").level = 3
         rsh = ecol.row(align=True)
-        rsh.operator("object.shade_smooth", text="Shade Smooth", icon="SHADING_RENDERED")
-        rsh.operator("object.shade_flat", text="Shade Flat", icon="SHADING_SOLID")
+        rsh.operator("object.shade_smooth", text="Smooth", icon="SHADING_RENDERED")
+        rsh.operator("object.shade_auto_smooth", text="Auto Smooth", icon="MOD_SMOOTH")
+        rsh.operator("object.shade_flat", text="Flat", icon="SHADING_SOLID")
         ecol.separator()
         rl = ecol.row(align=True)
         rl.operator("maya_ux.assign_maya_material", text="Lambert1").preset = "LAMBERT1"
