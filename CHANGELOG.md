@@ -2,6 +2,11 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.5.7] - 2026-11-26
+### Fixed & Improved
+- **Strict 1-Step Component Grow (`>`) / Shrink (`<`)**: in Edit Mode, each press now steps strictly 1 increment in the active component (`use_face_step=False` for **Vertex** and **Edge** modes so vertices grow `1→5→13` and edges grow `1→7→23`; `use_face_step=True` for **Face** mode `1→9→25`), with `repeat=False` so holding/tapping never over-steps, plus `BACK_SLASH` ISO fallback.
+- **Gizmo Size on `Shift + +` / `Shift + -` (`maya_ux.gizmo_size`)**: added `Shift++` (increase) and `Shift+-` (decrease) across **Italian/EU ISO Mac keyboards** (`PLUS`/`MINUS`, `RIGHT_BRACKET+Shift` `*`, `SLASH+Shift` `_`), **US ANSI keyboards** (`Shift+=` / `Shift+-`), and **Numpad**, while preserving US `?` (Cheatsheet) and `Shift+]` (Soft Select Radius).
+
 ## [2.5.6] - 2026-11-26
 ### Added & Fixed
 - **Maya Grow (`>`) / Shrink (`<`) Component Selection (`maya_ux.grow_shrink_selection`)**: works seamlessly in **Vertex**, **Edge**, **Face** (with 3×3 Maya ring step), **Multi-Component**, **Curve**, and **UV Editor** across **Italian/European Mac ISO keyboards** (`ACCENT_GRAVE` `<`/`>` and `GRLESS`), **ISO PC keyboards**, and **US/UK ANSI keyboards** (`⇧+.` / `⇧+,`), while passing through US `` ` `` / `~` untouched.

@@ -499,15 +499,17 @@ def test_selection_pickwalk_soft_and_delete():
     assert ops_selection.resolve_grow_shrink_action("AUTO", SimpleNamespace(type="GRLESS", unicode="", ascii="", shift=False)) == "SHRINK"
 
     for km_name in ("Mesh", "Curve", "UV Editor"):
-        bound_types = {kmi.type for km, kmi in keymap.addon_keymaps if km.name == km_name and kmi.idname == "maya_ux.grow_shrink_selection"}
-        assert {"PERIOD", "COMMA", "GRLESS", "ACCENT_GRAVE"}.issubset(bound_types), f"{km_name} missing <> bindings: {bound_types}"
+        grow_kmis = [(kmi.type, int(kmi.repeat)) for km, kmi in keymap.addon_keymaps if km.name == km_name and kmi.idname == "maya_ux.grow_shrink_selection"]
+        bound_types = {t for t, _rep in grow_kmis}
+        assert {"PERIOD", "COMMA", "GRLESS", "ACCENT_GRAVE", "BACK_SLASH"}.issubset(bound_types), f"{km_name} missing <> bindings: {bound_types}"
+        assert all(rep == 0 for _t, rep in grow_kmis), f"{km_name} <> bindings must have repeat=False"
 
     bpy.ops.object.select_all(action="DESELECT")
-    bpy.ops.mesh.primitive_grid_add(x_subdivisions=5, y_subdivisions=5)
+    bpy.ops.mesh.primitive_grid_add(x_subdivisions=7, y_subdivisions=7)
     grid = bpy.context.active_object
     bpy.ops.object.mode_set(mode="EDIT")
 
-    # Vertex grow/shrink
+    # Vertex multi-step grow/shrink strictly in VERT mode (1 -> 5 -> 13 -> 5 -> 1)
     ts.mesh_select_mode = (True, False, False)
     bpy.ops.mesh.select_all(action="DESELECT")
     bm_g = bmesh.from_edit_mesh(grid.data)
@@ -515,12 +517,16 @@ def test_selection_pickwalk_soft_and_delete():
     center_v = min(bm_g.verts, key=lambda v: v.co.length)
     center_v.select_set(True)
     bmesh.update_edit_mesh(grid.data)
-    assert bpy.ops.maya_ux.grow_shrink_selection(action="GROW") == {"FINISHED"}
-    assert sum(1 for v in bmesh.from_edit_mesh(grid.data).verts if v.select) == 9
-    assert bpy.ops.maya_ux.grow_shrink_selection(action="SHRINK") == {"FINISHED"}
-    assert sum(1 for v in bmesh.from_edit_mesh(grid.data).verts if v.select) == 1
+    for expected in (5, 13):
+        assert bpy.ops.maya_ux.grow_shrink_selection(action="GROW") == {"FINISHED"}
+        assert tuple(ts.mesh_select_mode) == (True, False, False)
+        assert sum(1 for v in bmesh.from_edit_mesh(grid.data).verts if v.select) == expected
+    for expected in (5, 1):
+        assert bpy.ops.maya_ux.grow_shrink_selection(action="SHRINK") == {"FINISHED"}
+        assert tuple(ts.mesh_select_mode) == (True, False, False)
+        assert sum(1 for v in bmesh.from_edit_mesh(grid.data).verts if v.select) == expected
 
-    # Edge grow/shrink
+    # Edge multi-step grow/shrink strictly in EDGE mode (1 -> 7 -> 23 -> <23 -> 1)
     ts.mesh_select_mode = (False, True, False)
     bpy.ops.mesh.select_all(action="DESELECT")
     bm_g = bmesh.from_edit_mesh(grid.data)
@@ -529,12 +535,18 @@ def test_selection_pickwalk_soft_and_delete():
     center_e.select_set(True)
     bmesh.update_edit_mesh(grid.data)
     assert bpy.ops.maya_ux.grow_shrink_selection(action="GROW") == {"FINISHED"}
-    e_after_grow = sum(1 for e in bmesh.from_edit_mesh(grid.data).edges if e.select)
-    assert e_after_grow > 1
+    e_step1 = sum(1 for e in bmesh.from_edit_mesh(grid.data).edges if e.select)
+    assert e_step1 == 7
+    assert bpy.ops.maya_ux.grow_shrink_selection(action="GROW") == {"FINISHED"}
+    e_step2 = sum(1 for e in bmesh.from_edit_mesh(grid.data).edges if e.select)
+    assert e_step2 == 23
     assert bpy.ops.maya_ux.grow_shrink_selection(action="SHRINK") == {"FINISHED"}
-    assert sum(1 for e in bmesh.from_edit_mesh(grid.data).edges if e.select) < e_after_grow
+    assert sum(1 for e in bmesh.from_edit_mesh(grid.data).edges if e.select) < e_step2
+    assert bpy.ops.maya_ux.grow_shrink_selection(action="SHRINK") == {"FINISHED"}
+    assert sum(1 for e in bmesh.from_edit_mesh(grid.data).edges if e.select) == 1
+    assert tuple(ts.mesh_select_mode) == (False, True, False)
 
-    # Face grow/shrink (1 center face -> 9 faces -> 1 face)
+    # Face multi-step grow/shrink strictly in FACE mode (1 -> 9 -> 25 -> 9 -> 1)
     ts.mesh_select_mode = (False, False, True)
     bpy.ops.mesh.select_all(action="DESELECT")
     bm_g = bmesh.from_edit_mesh(grid.data)
@@ -542,10 +554,14 @@ def test_selection_pickwalk_soft_and_delete():
     center_f = min(bm_g.faces, key=lambda f: f.calc_center_median().length)
     center_f.select_set(True)
     bmesh.update_edit_mesh(grid.data)
-    assert bpy.ops.maya_ux.grow_shrink_selection(action="GROW") == {"FINISHED"}
-    assert sum(1 for f in bmesh.from_edit_mesh(grid.data).faces if f.select) == 9
-    assert bpy.ops.maya_ux.grow_shrink_selection(action="SHRINK") == {"FINISHED"}
-    assert sum(1 for f in bmesh.from_edit_mesh(grid.data).faces if f.select) == 1
+    for expected in (9, 25):
+        assert bpy.ops.maya_ux.grow_shrink_selection(action="GROW") == {"FINISHED"}
+        assert tuple(ts.mesh_select_mode) == (False, False, True)
+        assert sum(1 for f in bmesh.from_edit_mesh(grid.data).faces if f.select) == expected
+    for expected in (9, 1):
+        assert bpy.ops.maya_ux.grow_shrink_selection(action="SHRINK") == {"FINISHED"}
+        assert tuple(ts.mesh_select_mode) == (False, False, True)
+        assert sum(1 for f in bmesh.from_edit_mesh(grid.data).faces if f.select) == expected
     bpy.ops.object.mode_set(mode="OBJECT")
     print("[PASS] selection_pickwalk_soft_and_delete")
 
@@ -590,6 +606,28 @@ def test_viewport_hide_bg_increment_save_and_cam_history():
         assert bpy.ops.maya_ux.increment_save(filepath_override=base_blend) == {"FINISHED"}
         expected_v3 = os.path.join(tmpdir, "shot_003.blend")
         assert os.path.isfile(expected_v3), f"Expected {expected_v3} to exist"
+
+    # Gizmo Size Shift++ / Shift+- resolver, keymap bindings, and live resize
+    from types import SimpleNamespace
+
+    assert ops_viewport.resolve_gizmo_size_delta(10, True, SimpleNamespace(unicode="*", ascii="*")) == 10
+    assert ops_viewport.resolve_gizmo_size_delta(10, True, SimpleNamespace(unicode="+", ascii="+")) == 10
+    assert ops_viewport.resolve_gizmo_size_delta(-10, True, SimpleNamespace(unicode="_", ascii="_")) == -10
+    assert ops_viewport.resolve_gizmo_size_delta(-10, True, SimpleNamespace(unicode="-", ascii="-")) == -10
+    assert ops_viewport.resolve_gizmo_size_delta(-10, True, SimpleNamespace(unicode="?", ascii="?")) is None
+    assert ops_viewport.resolve_gizmo_size_delta(10, True, SimpleNamespace(unicode="}", ascii="}")) is None
+    assert ops_viewport.resolve_gizmo_size_delta(-10, False, SimpleNamespace(unicode="?", ascii="?")) is None
+    assert ops_viewport.resolve_gizmo_size_delta(-10, False, SimpleNamespace(unicode="_", ascii="_")) == -10
+
+    gizmo_shift_keys = {(kmi.type, int(kmi.properties.delta), bool(kmi.properties.auto_mode)) for km, kmi in keymap.addon_keymaps if km.name == "3D View" and kmi.idname == "maya_ux.gizmo_size" and kmi.shift}
+    for req in (("PLUS", 10, False), ("EQUAL", 10, False), ("NUMPAD_PLUS", 10, False), ("MINUS", -10, False), ("NUMPAD_MINUS", -10, False), ("RIGHT_BRACKET", 10, True), ("SLASH", -10, True)):
+        assert req in gizmo_shift_keys, f"Missing 3D View gizmo Shift binding: {req}"
+
+    orig_gizmo_sz = int(bpy.context.preferences.view.gizmo_size)
+    assert bpy.ops.maya_ux.gizmo_size(delta=10) == {"FINISHED"}
+    assert int(bpy.context.preferences.view.gizmo_size) == min(200, orig_gizmo_sz + 10)
+    assert bpy.ops.maya_ux.gizmo_size(delta=-10) == {"FINISHED"}
+    assert int(bpy.context.preferences.view.gizmo_size) == orig_gizmo_sz
     print("[PASS] viewport_hide_bg_increment_save_and_cam_history")
 
 

@@ -404,10 +404,13 @@ class MAYA_UX_OT_grow_shrink_selection(bpy.types.Operator):
 
         mode = getattr(context, "mode", "")
         if mode == "EDIT_MESH":
+            v_mode, e_mode, f_mode = tuple(context.tool_settings.mesh_select_mode)
+            # Only Face-only mode steps across face rings; Vert/Edge/Multi step strictly 1 hop in active component.
+            face_step = bool(f_mode and not v_mode and not e_mode)
             if resolved == "GROW":
-                bpy.ops.mesh.select_more(use_face_step=True)
+                bpy.ops.mesh.select_more(use_face_step=face_step)
             else:
-                bpy.ops.mesh.select_less(use_face_step=True)
+                bpy.ops.mesh.select_less(use_face_step=face_step)
             return {"FINISHED"}
 
         if mode == "EDIT_CURVE":

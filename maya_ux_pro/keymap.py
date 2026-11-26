@@ -259,10 +259,14 @@ def register_keymaps():
         _add_kmi(km_outliner, "maya_ux.smart_hide", "H", shift=True, props={"action": "UNHIDE"})
         _add_kmi(km_outliner, "maya_ux.smart_hide", "H", ctrl=True, shift=True, props={"action": "UNHIDE_LAST"})
 
-        _add_kmi(km_view3d, "maya_ux.gizmo_size", "EQUAL", props={"delta": 10})
-        _add_kmi(km_view3d, "maya_ux.gizmo_size", "NUMPAD_PLUS", props={"delta": 10})
-        _add_kmi(km_view3d, "maya_ux.gizmo_size", "MINUS", props={"delta": -10})
-        _add_kmi(km_view3d, "maya_ux.gizmo_size", "NUMPAD_MINUS", props={"delta": -10})
+        for sh in (False, True):
+            for key in ("EQUAL", "PLUS", "NUMPAD_PLUS"):
+                _add_kmi(km_view3d, "maya_ux.gizmo_size", key, shift=sh, props={"delta": 10, "auto_mode": False})
+            for key in ("MINUS", "NUMPAD_MINUS"):
+                _add_kmi(km_view3d, "maya_ux.gizmo_size", key, shift=sh, props={"delta": -10, "auto_mode": False})
+        # Italian/ISO Mac Shift++ (*) hits RIGHT_BRACKET and Shift+- (_) hits SLASH; US ? / } pass through cleanly.
+        _add_kmi(km_view3d, "maya_ux.gizmo_size", "RIGHT_BRACKET", shift=True, props={"delta": 10, "auto_mode": True})
+        _add_kmi(km_view3d, "maya_ux.gizmo_size", "SLASH", shift=True, props={"delta": -10, "auto_mode": True})
 
         for key, sh_type in (
             ("FOUR", "WIREFRAME"),
@@ -440,14 +444,16 @@ def register_keymaps():
             )
 
         # Maya Grow (>) / Shrink (<) Selection across US ANSI (Shift+. / Shift+,),
-        # ISO European/PC (GRLESS / Shift+GRLESS), and Italian/EU Mac ISO (ACCENT_GRAVE '<' / '>').
+        # ISO European/PC (GRLESS / Shift+GRLESS), and Italian/EU Mac ISO (ACCENT_GRAVE / BACK_SLASH).
+        # repeat=False enforces 1 key press = 1 component step.
         for km in (km_mesh, km_curve):
-            _add_kmi(km, "maya_ux.grow_shrink_selection", "PERIOD", shift=True, props={"action": "GROW"})
-            _add_kmi(km, "maya_ux.grow_shrink_selection", "COMMA", shift=True, props={"action": "SHRINK"})
-            _add_kmi(km, "maya_ux.grow_shrink_selection", "GRLESS", shift=True, props={"action": "GROW"})
-            _add_kmi(km, "maya_ux.grow_shrink_selection", "GRLESS", shift=False, props={"action": "SHRINK"})
-            _add_kmi(km, "maya_ux.grow_shrink_selection", "ACCENT_GRAVE", shift=True, props={"action": "AUTO"})
-            _add_kmi(km, "maya_ux.grow_shrink_selection", "ACCENT_GRAVE", shift=False, props={"action": "AUTO"})
+            _add_kmi(km, "maya_ux.grow_shrink_selection", "PERIOD", shift=True, repeat=False, props={"action": "GROW"})
+            _add_kmi(km, "maya_ux.grow_shrink_selection", "COMMA", shift=True, repeat=False, props={"action": "SHRINK"})
+            _add_kmi(km, "maya_ux.grow_shrink_selection", "GRLESS", shift=True, repeat=False, props={"action": "GROW"})
+            _add_kmi(km, "maya_ux.grow_shrink_selection", "GRLESS", shift=False, repeat=False, props={"action": "SHRINK"})
+            for iso_key in ("ACCENT_GRAVE", "BACK_SLASH"):
+                _add_kmi(km, "maya_ux.grow_shrink_selection", iso_key, shift=True, repeat=False, props={"action": "AUTO"})
+                _add_kmi(km, "maya_ux.grow_shrink_selection", iso_key, shift=False, repeat=False, props={"action": "AUTO"})
 
         _add_primary_kmi(km_object, "object.select_all", "I", is_mac=is_mac, shift=True, allow_cmd=True, props={"action": "INVERT"})
         _add_primary_kmi(km_mesh, "mesh.select_all", "I", is_mac=is_mac, shift=True, allow_cmd=True, props={"action": "INVERT"})
@@ -573,12 +579,13 @@ def register_keymaps():
 
         _add_kmi(km_uv, "image.view_selected", "F")
         _add_kmi(km_uv, "image.view_all", "A")
-        _add_kmi(km_uv, "maya_ux.grow_shrink_selection", "PERIOD", shift=True, props={"action": "GROW"})
-        _add_kmi(km_uv, "maya_ux.grow_shrink_selection", "COMMA", shift=True, props={"action": "SHRINK"})
-        _add_kmi(km_uv, "maya_ux.grow_shrink_selection", "GRLESS", shift=True, props={"action": "GROW"})
-        _add_kmi(km_uv, "maya_ux.grow_shrink_selection", "GRLESS", shift=False, props={"action": "SHRINK"})
-        _add_kmi(km_uv, "maya_ux.grow_shrink_selection", "ACCENT_GRAVE", shift=True, props={"action": "AUTO"})
-        _add_kmi(km_uv, "maya_ux.grow_shrink_selection", "ACCENT_GRAVE", shift=False, props={"action": "AUTO"})
+        _add_kmi(km_uv, "maya_ux.grow_shrink_selection", "PERIOD", shift=True, repeat=False, props={"action": "GROW"})
+        _add_kmi(km_uv, "maya_ux.grow_shrink_selection", "COMMA", shift=True, repeat=False, props={"action": "SHRINK"})
+        _add_kmi(km_uv, "maya_ux.grow_shrink_selection", "GRLESS", shift=True, repeat=False, props={"action": "GROW"})
+        _add_kmi(km_uv, "maya_ux.grow_shrink_selection", "GRLESS", shift=False, repeat=False, props={"action": "SHRINK"})
+        for iso_key in ("ACCENT_GRAVE", "BACK_SLASH"):
+            _add_kmi(km_uv, "maya_ux.grow_shrink_selection", iso_key, shift=True, repeat=False, props={"action": "AUTO"})
+            _add_kmi(km_uv, "maya_ux.grow_shrink_selection", iso_key, shift=False, repeat=False, props={"action": "AUTO"})
         _add_primary_kmi(km_uv, "uv.select_linked", "F12", is_mac=is_mac, allow_cmd=True)
         _add_kmi(km_uv, "uv.mark_seam", "X", shift=True, props={"clear": False})
         _add_kmi(km_uv, "uv.stitch", "S", shift=True)

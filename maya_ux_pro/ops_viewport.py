@@ -149,21 +149,54 @@ class MAYA_UX_OT_set_tool(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def resolve_gizmo_size_delta(delta: int, auto_mode: bool = False, event=None) -> int | None:
+    """Resolve gizmo size step across Italian ISO (* / _) and US ANSI (+ / -) Shift bindings."""
+    char = ""
+    if event is not None:
+        char = getattr(event, "unicode", "") or getattr(event, "ascii", "")
+    if auto_mode:
+        step = abs(int(delta)) or 10
+        if char in {"+", "*"}:
+            return step
+        if char in {"-", "_"}:
+            return -step
+        return None
+    if char == "?":
+        return None
+    return int(delta)
+
+
 class MAYA_UX_OT_gizmo_size(bpy.types.Operator):
-    """Adjust viewport transform gizmo size like Maya +/- keys."""
+    """Adjust viewport transform gizmo size like Maya +/- and Shift++ / Shift+- keys."""
 
     bl_idname = "maya_ux.gizmo_size"
     bl_label = "Adjust Gizmo Size"
     bl_options = {"REGISTER"}
 
     delta: IntProperty(name="Delta", default=10)
+    auto_mode: BoolProperty(name="Auto Layout Detect", default=False)
 
-    def execute(self, context):
+    def _apply_delta(self, context, step: int):
         view_prefs = context.preferences.view
-        new_size = max(20, min(200, int(view_prefs.gizmo_size) + self.delta))
+        new_size = max(20, min(200, int(view_prefs.gizmo_size) + int(step)))
         view_prefs.gizmo_size = new_size
+        wm = getattr(context, "window_manager", None)
+        if wm is not None:
+            for win in wm.windows:
+                for area in win.screen.areas:
+                    if area.type == "VIEW_3D":
+                        area.tag_redraw()
         self.report({"INFO"}, f"Gizmo Size: {new_size}")
         return {"FINISHED"}
+
+    def invoke(self, context, event):
+        step = resolve_gizmo_size_delta(self.delta, self.auto_mode, event)
+        if step is None:
+            return {"PASS_THROUGH"}
+        return self._apply_delta(context, step)
+
+    def execute(self, context):
+        return self._apply_delta(context, self.delta)
 
 
 class MAYA_UX_OT_set_shading(bpy.types.Operator):

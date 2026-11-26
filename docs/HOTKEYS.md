@@ -1,4 +1,4 @@
-# Maya UX Pro — Complete Hotkey Reference (`v2.5.6`)
+# Maya UX Pro — Complete Hotkey Reference (`v2.5.7`)
 
 > Press **`?`** (or **`F1`**) inside Blender's 3D Viewport at any time to open the live searchable **Hotkey Reference & Equivalence** dialog.
 
@@ -16,7 +16,7 @@
 | Dolly (Zoom, Maya inverted) | `⌥ + RMB` · `⌥ + ⌃ + Click` · `Trackpad Pinch` |
 | Virtual Transform (Global / Last Axis) | `MMB Drag` (Selected Object or Vert/Edge/Face + `W / E / R / T`) |
 | Select / Move / Rotate / Scale / Universal | `Q` / `W` / `E` / `R` / `T` |
-| Gizmo Size + / - | `=` or `Numpad +` / `-` or `Numpad -` |
+| Gizmo Size + / - | `⇧ + +` / `⇧ + -` (or `=` / `-` / `Numpad +` / `Numpad -`) |
 | Frame Selected / Frame All | `F` / `A` (`⇧+F` / `⇧+A` all 4 views) |
 | Tap Spacebar (Pane / Quad View) | `Space` tap (`< 0.20s` — maximizes hovered pane or Quad View with `Persp`) |
 | Hold Spacebar (Floating Maya Hotbox) | `Space` hold (`≥ 0.20s` or drag) · `⇧ + Space` View Pie |
@@ -44,7 +44,7 @@
 | Command | Shortcut |
 |---|---|
 | Face Center-Only Selection | `LMB Click` on center dot (`⇧+Click` toggle, `⌃+Click` deselect) |
-| Grow / Shrink Selection | `>` / `<` (Italian/EU ISO `<>` or `⇧ + .` / `⇧ + ,`) |
+| Grow / Shrink Selection (1 step per press) | `>` / `<` (Italian/EU ISO `<>` or `⇧ + .` / `⇧ + ,`) |
 | Invert Selection | `⌘ + ⇧ + I` |
 | Convert to Vert / Edge / Face | `⌃ + F9` / `⌃ + F10` / `⌃ + F11` |
 | Pick Walk (Parent / Child / Siblings) | `↑` / `↓` / `←` / `→` |
