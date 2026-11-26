@@ -359,6 +359,79 @@ class MAYA_UX_OT_smart_delete(bpy.types.Operator):
         return {"PASS_THROUGH"}
 
 
+def resolve_grow_shrink_action(action: str, event=None) -> str | None:
+    """Resolve Grow (>) vs Shrink (<) from explicit enum or ISO/Mac/US keyboard event."""
+    if action in {"GROW", "SHRINK"}:
+        return action
+    if event is None:
+        return None
+    char = getattr(event, "unicode", "") or getattr(event, "ascii", "")
+    if char == ">":
+        return "GROW"
+    if char == "<":
+        return "SHRINK"
+    if getattr(event, "type", "") == "GRLESS":
+        return "GROW" if bool(getattr(event, "shift", False)) else "SHRINK"
+    return None
+
+
+class MAYA_UX_OT_grow_shrink_selection(bpy.types.Operator):
+    """Maya Grow (>) / Shrink (<) selection across Mesh components, Curve, and UV Editor."""
+
+    bl_idname = "maya_ux.grow_shrink_selection"
+    bl_label = "Maya Grow / Shrink Selection"
+    bl_options = {"REGISTER", "UNDO"}
+
+    action: EnumProperty(
+        name="Action",
+        items=[
+            ("AUTO", "Auto", "Detect < or > from keyboard event"),
+            ("GROW", "Grow (>)", "Grow component selection"),
+            ("SHRINK", "Shrink (<)", "Shrink component selection"),
+        ],
+        default="AUTO",
+    )
+
+    def _run_action(self, context, resolved: str):
+        area = getattr(context, "area", None)
+        area_type = getattr(area, "type", "") if area is not None else ""
+        if area_type == "IMAGE_EDITOR":
+            if resolved == "GROW":
+                bpy.ops.uv.select_more()
+            else:
+                bpy.ops.uv.select_less()
+            return {"FINISHED"}
+
+        mode = getattr(context, "mode", "")
+        if mode == "EDIT_MESH":
+            if resolved == "GROW":
+                bpy.ops.mesh.select_more(use_face_step=True)
+            else:
+                bpy.ops.mesh.select_less(use_face_step=True)
+            return {"FINISHED"}
+
+        if mode == "EDIT_CURVE":
+            if resolved == "GROW":
+                bpy.ops.curve.select_more()
+            else:
+                bpy.ops.curve.select_less()
+            return {"FINISHED"}
+
+        return {"PASS_THROUGH"}
+
+    def invoke(self, context, event):
+        resolved = resolve_grow_shrink_action(self.action, event)
+        if resolved is None:
+            return {"PASS_THROUGH"}
+        return self._run_action(context, resolved)
+
+    def execute(self, context):
+        resolved = resolve_grow_shrink_action(self.action, None)
+        if resolved is None:
+            return {"CANCELLED"}
+        return self._run_action(context, resolved)
+
+
 CLASSES = (
     MAYA_UX_OT_select_face_center,
     MAYA_UX_OT_convert_selection,
@@ -366,6 +439,7 @@ CLASSES = (
     MAYA_UX_OT_toggle_soft_select,
     MAYA_UX_OT_soft_select_radius,
     MAYA_UX_OT_smart_delete,
+    MAYA_UX_OT_grow_shrink_selection,
 )
 
 

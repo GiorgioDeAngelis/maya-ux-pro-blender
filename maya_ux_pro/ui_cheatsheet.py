@@ -41,7 +41,7 @@ def _get_sections(is_mac: bool):
             ("Hotkey Reference", "?  (or Fn+F1)"),
         )
         sel = (
-            ("Grow / Shrink Selection", "> / <  (⇧+. / ⇧+,)"),
+            ("Grow / Shrink Selection", "> / <  (ISO <> or ⇧+. / ⇧+,)"),
             ("Invert Selection", f"{c}+{s}+I"),
             ("Convert to Vert / Edge / Face", f"{ct}+F9 / F10 / F11"),
             ("Pick Walk (Parent/Child/Siblings)", "↑ / ↓ / ← / →"),
@@ -98,7 +98,7 @@ def _get_sections(is_mac: bool):
             ("Hotkey Reference", "?  or  F1"),
         )
         sel = (
-            ("Grow / Shrink Selection", "> / < (Shift+. / Shift+,)"),
+            ("Grow / Shrink Selection", "> / <  (ISO <> or Shift+. / Shift+,)"),
             ("Invert Selection", "Ctrl + Shift + I"),
             ("Convert to Vert / Edge / Face", "Ctrl+F9 / F10 / F11"),
             ("Pick Walk (Parent/Child/Siblings)", "Up / Down / Left / Right"),

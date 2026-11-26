@@ -1,4 +1,4 @@
-# Maya UX Pro — Complete Hotkey Reference (`v2.5.1`)
+# Maya UX Pro — Complete Hotkey Reference (`v2.5.6`)
 
 > Press **`?`** (or **`F1`**) inside Blender's 3D Viewport at any time to open the live searchable **Hotkey Reference & Equivalence** dialog.
 
@@ -44,7 +44,7 @@
 | Command | Shortcut |
 |---|---|
 | Face Center-Only Selection | `LMB Click` on center dot (`⇧+Click` toggle, `⌃+Click` deselect) |
-| Grow / Shrink Selection | `>` (`⇧ + .`) / `<` (`⇧ + ,`) |
+| Grow / Shrink Selection | `>` / `<` (Italian/EU ISO `<>` or `⇧ + .` / `⇧ + ,`) |
 | Invert Selection | `⌘ + ⇧ + I` |
 | Convert to Vert / Edge / Face | `⌃ + F9` / `⌃ + F10` / `⌃ + F11` |
 | Pick Walk (Parent / Child / Siblings) | `↑` / `↓` / `←` / `→` |

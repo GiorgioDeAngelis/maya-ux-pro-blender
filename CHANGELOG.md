@@ -2,6 +2,10 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.5.6] - 2026-11-26
+### Added & Fixed
+- **Maya Grow (`>`) / Shrink (`<`) Component Selection (`maya_ux.grow_shrink_selection`)**: works seamlessly in **Vertex**, **Edge**, **Face** (with 3×3 Maya ring step), **Multi-Component**, **Curve**, and **UV Editor** across **Italian/European Mac ISO keyboards** (`ACCENT_GRAVE` `<`/`>` and `GRLESS`), **ISO PC keyboards**, and **US/UK ANSI keyboards** (`⇧+.` / `⇧+,`), while passing through US `` ` `` / `~` untouched.
+
 ## [2.5.5] - 2026-11-26
 ### Added
 - **`Shade Auto Smooth` in Object Mode RMB Marking Menu & Hotbox**: added `Shade Auto Smooth` (`object.shade_auto_smooth`) alongside `Shade Smooth` and `Shade Flat` in the Object Mode Right-Click Marking Menu (`VIEW3D_MT_maya_component_pie`) and Spacebar Floating Hotbox (`Modeling & Pivot`).

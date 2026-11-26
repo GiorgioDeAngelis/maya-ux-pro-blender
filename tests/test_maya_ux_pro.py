@@ -486,6 +486,67 @@ def test_selection_pickwalk_soft_and_delete():
     cands = [("front_face", 100.0, 100.0, 2.0), ("back_face", 102.0, 100.0, 8.0), ("far_face", 300.0, 300.0, 1.0)]
     assert ops_selection.pick_face_by_center_2d(cands, (103.0, 101.0), hit_radius_px=10.0) == "front_face"
     assert ops_selection.pick_face_by_center_2d(cands, (140.0, 100.0), hit_radius_px=10.0) is None
+
+    # Maya Grow (>) / Shrink (<) Selection resolver, keymaps & Vertex/Edge/Face behavior
+    from types import SimpleNamespace
+
+    assert ops_selection.resolve_grow_shrink_action("GROW") == "GROW"
+    assert ops_selection.resolve_grow_shrink_action("SHRINK") == "SHRINK"
+    assert ops_selection.resolve_grow_shrink_action("AUTO", SimpleNamespace(type="ACCENT_GRAVE", unicode=">", ascii=">", shift=True)) == "GROW"
+    assert ops_selection.resolve_grow_shrink_action("AUTO", SimpleNamespace(type="ACCENT_GRAVE", unicode="<", ascii="<", shift=False)) == "SHRINK"
+    assert ops_selection.resolve_grow_shrink_action("AUTO", SimpleNamespace(type="ACCENT_GRAVE", unicode="`", ascii="`", shift=False)) is None
+    assert ops_selection.resolve_grow_shrink_action("AUTO", SimpleNamespace(type="GRLESS", unicode="", ascii="", shift=True)) == "GROW"
+    assert ops_selection.resolve_grow_shrink_action("AUTO", SimpleNamespace(type="GRLESS", unicode="", ascii="", shift=False)) == "SHRINK"
+
+    for km_name in ("Mesh", "Curve", "UV Editor"):
+        bound_types = {kmi.type for km, kmi in keymap.addon_keymaps if km.name == km_name and kmi.idname == "maya_ux.grow_shrink_selection"}
+        assert {"PERIOD", "COMMA", "GRLESS", "ACCENT_GRAVE"}.issubset(bound_types), f"{km_name} missing <> bindings: {bound_types}"
+
+    bpy.ops.object.select_all(action="DESELECT")
+    bpy.ops.mesh.primitive_grid_add(x_subdivisions=5, y_subdivisions=5)
+    grid = bpy.context.active_object
+    bpy.ops.object.mode_set(mode="EDIT")
+
+    # Vertex grow/shrink
+    ts.mesh_select_mode = (True, False, False)
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bm_g = bmesh.from_edit_mesh(grid.data)
+    bm_g.verts.ensure_lookup_table()
+    center_v = min(bm_g.verts, key=lambda v: v.co.length)
+    center_v.select_set(True)
+    bmesh.update_edit_mesh(grid.data)
+    assert bpy.ops.maya_ux.grow_shrink_selection(action="GROW") == {"FINISHED"}
+    assert sum(1 for v in bmesh.from_edit_mesh(grid.data).verts if v.select) == 9
+    assert bpy.ops.maya_ux.grow_shrink_selection(action="SHRINK") == {"FINISHED"}
+    assert sum(1 for v in bmesh.from_edit_mesh(grid.data).verts if v.select) == 1
+
+    # Edge grow/shrink
+    ts.mesh_select_mode = (False, True, False)
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bm_g = bmesh.from_edit_mesh(grid.data)
+    bm_g.edges.ensure_lookup_table()
+    center_e = min(bm_g.edges, key=lambda e: ((e.verts[0].co + e.verts[1].co) * 0.5).length)
+    center_e.select_set(True)
+    bmesh.update_edit_mesh(grid.data)
+    assert bpy.ops.maya_ux.grow_shrink_selection(action="GROW") == {"FINISHED"}
+    e_after_grow = sum(1 for e in bmesh.from_edit_mesh(grid.data).edges if e.select)
+    assert e_after_grow > 1
+    assert bpy.ops.maya_ux.grow_shrink_selection(action="SHRINK") == {"FINISHED"}
+    assert sum(1 for e in bmesh.from_edit_mesh(grid.data).edges if e.select) < e_after_grow
+
+    # Face grow/shrink (1 center face -> 9 faces -> 1 face)
+    ts.mesh_select_mode = (False, False, True)
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bm_g = bmesh.from_edit_mesh(grid.data)
+    bm_g.faces.ensure_lookup_table()
+    center_f = min(bm_g.faces, key=lambda f: f.calc_center_median().length)
+    center_f.select_set(True)
+    bmesh.update_edit_mesh(grid.data)
+    assert bpy.ops.maya_ux.grow_shrink_selection(action="GROW") == {"FINISHED"}
+    assert sum(1 for f in bmesh.from_edit_mesh(grid.data).faces if f.select) == 9
+    assert bpy.ops.maya_ux.grow_shrink_selection(action="SHRINK") == {"FINISHED"}
+    assert sum(1 for f in bmesh.from_edit_mesh(grid.data).faces if f.select) == 1
+    bpy.ops.object.mode_set(mode="OBJECT")
     print("[PASS] selection_pickwalk_soft_and_delete")
 
 

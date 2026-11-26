@@ -439,8 +439,15 @@ def register_keymaps():
                 props={"toggle": False, "deselect": True},
             )
 
-        _add_kmi(km_mesh, "mesh.select_more", "PERIOD", shift=True)
-        _add_kmi(km_mesh, "mesh.select_less", "COMMA", shift=True)
+        # Maya Grow (>) / Shrink (<) Selection across US ANSI (Shift+. / Shift+,),
+        # ISO European/PC (GRLESS / Shift+GRLESS), and Italian/EU Mac ISO (ACCENT_GRAVE '<' / '>').
+        for km in (km_mesh, km_curve):
+            _add_kmi(km, "maya_ux.grow_shrink_selection", "PERIOD", shift=True, props={"action": "GROW"})
+            _add_kmi(km, "maya_ux.grow_shrink_selection", "COMMA", shift=True, props={"action": "SHRINK"})
+            _add_kmi(km, "maya_ux.grow_shrink_selection", "GRLESS", shift=True, props={"action": "GROW"})
+            _add_kmi(km, "maya_ux.grow_shrink_selection", "GRLESS", shift=False, props={"action": "SHRINK"})
+            _add_kmi(km, "maya_ux.grow_shrink_selection", "ACCENT_GRAVE", shift=True, props={"action": "AUTO"})
+            _add_kmi(km, "maya_ux.grow_shrink_selection", "ACCENT_GRAVE", shift=False, props={"action": "AUTO"})
 
         _add_primary_kmi(km_object, "object.select_all", "I", is_mac=is_mac, shift=True, allow_cmd=True, props={"action": "INVERT"})
         _add_primary_kmi(km_mesh, "mesh.select_all", "I", is_mac=is_mac, shift=True, allow_cmd=True, props={"action": "INVERT"})
@@ -566,8 +573,12 @@ def register_keymaps():
 
         _add_kmi(km_uv, "image.view_selected", "F")
         _add_kmi(km_uv, "image.view_all", "A")
-        _add_kmi(km_uv, "uv.select_more", "PERIOD", shift=True)
-        _add_kmi(km_uv, "uv.select_less", "COMMA", shift=True)
+        _add_kmi(km_uv, "maya_ux.grow_shrink_selection", "PERIOD", shift=True, props={"action": "GROW"})
+        _add_kmi(km_uv, "maya_ux.grow_shrink_selection", "COMMA", shift=True, props={"action": "SHRINK"})
+        _add_kmi(km_uv, "maya_ux.grow_shrink_selection", "GRLESS", shift=True, props={"action": "GROW"})
+        _add_kmi(km_uv, "maya_ux.grow_shrink_selection", "GRLESS", shift=False, props={"action": "SHRINK"})
+        _add_kmi(km_uv, "maya_ux.grow_shrink_selection", "ACCENT_GRAVE", shift=True, props={"action": "AUTO"})
+        _add_kmi(km_uv, "maya_ux.grow_shrink_selection", "ACCENT_GRAVE", shift=False, props={"action": "AUTO"})
         _add_primary_kmi(km_uv, "uv.select_linked", "F12", is_mac=is_mac, allow_cmd=True)
         _add_kmi(km_uv, "uv.mark_seam", "X", shift=True, props={"clear": False})
         _add_kmi(km_uv, "uv.stitch", "S", shift=True)
