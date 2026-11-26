@@ -57,7 +57,7 @@ def _get_sections(is_mac: bool):
             ("Delete History", f"{o}+{s}+D"),
             ("Group / Parent / Unparent", f"{c}+G / P / {s}+P"),
             ("Extrude / Bevel / Multi-Cut", f"{c}+E / {c}+B / {c}+{s}+X"),
-            ("Bridge / Merge / Reverse Normals", f"{c}+{s}+B / {c}+{o}+M / {o}+N"),
+            ("Bridge / Merge Menu / Reverse Normals", f"{c}+{s}+B / M ({c}+{o}+M) / {o}+N"),
             ("Target Weld / Quad Draw / Make Live", "Shift+RMB / Maya Panel / Top Shelf"),
         )
         anim = (
@@ -114,7 +114,7 @@ def _get_sections(is_mac: bool):
             ("Delete History", "Alt + Shift + D"),
             ("Group / Parent / Unparent", "Ctrl+G / P / Shift+P"),
             ("Extrude / Bevel / Multi-Cut", "Ctrl+E / Ctrl+B / Ctrl+Shift+X"),
-            ("Bridge / Merge / Reverse Normals", "Ctrl+Shift+B / Ctrl+Alt+M / Alt+N"),
+            ("Bridge / Merge Menu / Reverse Normals", "Ctrl+Shift+B / M (Ctrl+Alt+M) / Alt+N"),
             ("Target Weld / Quad Draw / Make Live", "Shift+RMB / Maya Panel / Top Shelf"),
         )
         anim = (

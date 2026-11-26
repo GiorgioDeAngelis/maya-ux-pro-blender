@@ -65,7 +65,7 @@ class VIEW3D_MT_maya_modeling_pie(bpy.types.Menu):
             op.name = "builtin.loop_cut"
             pie.operator("mesh.knife_tool", text="Multi-Cut (Knife)", icon="SCULPTMODE_HLT")
             pie.operator("mesh.bridge_edge_loops", text="Bridge Loops", icon="MOD_SOLIDIFY")
-            pie.operator("maya_ux.merge_to_last", text="Merge to Last", icon="SNAP_VERTEX")
+            pie.operator("wm.call_menu", text="Merge (M)", icon="SNAP_VERTEX").name = "VIEW3D_MT_edit_mesh_merge"
             pie.operator("mesh.vertices_smooth", text="Smooth Vertices", icon="MOD_SMOOTH")
         else:
             pie.operator("mesh.primitive_cube_add", text="Polygon Cube", icon="MESH_CUBE")

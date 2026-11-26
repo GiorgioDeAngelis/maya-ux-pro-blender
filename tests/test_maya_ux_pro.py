@@ -830,6 +830,30 @@ def test_v2_pro_tools():
     weld_hits = ui_cheatsheet.filter_sections(is_mac=True, query="weld")
     assert len(weld_hits) == 1
     assert any("Target Weld" in lbl for lbl, _sc in weld_hits[0][1])
+
+    # 6. Merge menu (M / VIEW3D_MT_edit_mesh_merge) and F Frame Selected across Object & Component modes
+    assert hasattr(bpy.types, "VIEW3D_MT_edit_mesh_merge")
+    for km_name in ("3D View", "Object Mode", "Mesh", "Pose", "Curve"):
+        f_items = [
+            kmi
+            for km, kmi in keymap.addon_keymaps
+            if km.name == km_name and kmi.idname == "view3d.view_selected" and kmi.type == "F"
+        ]
+        assert len(f_items) == 1, f"Missing F -> view3d.view_selected in {km_name}"
+        assert f_items[0].ctrl == 0 and f_items[0].shift == 0 and f_items[0].alt == 0 and f_items[0].oskey == 0
+
+    m_items = [
+        kmi
+        for km, kmi in keymap.addon_keymaps
+        if km.name == "Mesh"
+        and kmi.idname == "wm.call_menu"
+        and kmi.type == "M"
+        and kmi.ctrl == 0
+        and kmi.shift == 0
+        and kmi.alt == 0
+        and kmi.oskey == 0
+    ]
+    assert len(m_items) == 1 and m_items[0].properties.name == "VIEW3D_MT_edit_mesh_merge"
     print("[PASS] v2_pro_tools")
 
 

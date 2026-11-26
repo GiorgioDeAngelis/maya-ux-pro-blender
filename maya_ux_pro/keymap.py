@@ -168,6 +168,7 @@ def register_keymaps():
     km_mesh = kc.keymaps.new(name="Mesh", space_type="EMPTY")
     km_outliner = kc.keymaps.new(name="Outliner", space_type="OUTLINER")
     km_pose = kc.keymaps.new(name="Pose", space_type="EMPTY")
+    km_curve = kc.keymaps.new(name="Curve", space_type="EMPTY")
     km_frames = kc.keymaps.new(name="Frames", space_type="EMPTY")
     km_graph = kc.keymaps.new(name="Graph Editor", space_type="GRAPH_EDITOR")
     km_dope = kc.keymaps.new(name="Dopesheet", space_type="DOPESHEET_EDITOR")
@@ -196,7 +197,6 @@ def register_keymaps():
             # Ensure Option+MMB always pans, and bare MMB does Maya Smart Pan / Virtual Transform
             _add_kmi(km_view3d, "view3d.move", "MIDDLEMOUSE", alt=True)
             _add_kmi(km_view3d, "maya_ux.mmb_smart_drag", "MIDDLEMOUSE")
-            km_curve = kc.keymaps.new(name="Curve", space_type="EMPTY")
             for km in (km_object, km_mesh, km_pose, km_curve):
                 _add_kmi(km, "maya_ux.mmb_smart_drag", "MIDDLEMOUSE")
             for tool_km_name in (
@@ -277,6 +277,8 @@ def register_keymaps():
         _add_kmi(km_view3d, "maya_ux.default_display", "ZERO")
         _add_primary_kmi(km_view3d, "maya_ux.isolate_select", "ONE", is_mac=is_mac, allow_cmd=True)
         _add_kmi(km_view3d, "maya_ux.isolate_select", "I", shift=True)
+        for km in (km_view3d, km_object, km_mesh, km_pose, km_curve):
+            _add_kmi(km, "view3d.view_selected", "F")
         _add_kmi(km_view3d, "maya_ux.frame_all_views", "A", shift=True, props={"selected_only": False})
         _add_kmi(km_view3d, "maya_ux.frame_all_views", "F", shift=True, props={"selected_only": True})
         # Ctrl+Space (never Cmd+Space Spotlight) & Ctrl+A (never Cmd+A Select All)
@@ -499,7 +501,16 @@ def register_keymaps():
         _add_primary_kmi(km_mesh, "mesh.bevel", "B", is_mac=is_mac, allow_cmd=True)
         _add_primary_kmi(km_mesh, "mesh.knife_tool", "X", is_mac=is_mac, shift=True, allow_cmd=True)
         _add_primary_kmi(km_mesh, "mesh.bridge_edge_loops", "B", is_mac=is_mac, shift=True, allow_cmd=True)
-        _add_primary_kmi(km_mesh, "mesh.merge", "M", is_mac=is_mac, alt=True, allow_cmd=True, props={"type": "CENTER"})
+        _add_kmi(km_mesh, "wm.call_menu", "M", props={"name": "VIEW3D_MT_edit_mesh_merge"})
+        _add_primary_kmi(
+            km_mesh,
+            "wm.call_menu",
+            "M",
+            is_mac=is_mac,
+            alt=True,
+            allow_cmd=True,
+            props={"name": "VIEW3D_MT_edit_mesh_merge"},
+        )
         _add_kmi(km_mesh, "mesh.flip_normals", "N", alt=True)
 
     # 8. Animation, Timeline & Graph Editor

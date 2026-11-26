@@ -62,7 +62,7 @@
 | Delete History | `⌥ + ⇧ + D` |
 | Group / Parent / Unparent | `⌘ + G` / `P` / `⇧ + P` |
 | Extrude / Bevel / Multi-Cut | `⌘ + E` / `⌘ + B` / `⌘ + ⇧ + X` |
-| Bridge / Merge to Center / Reverse Normals | `⌘ + ⇧ + B` / `⌘ + ⌥ + M` / `⌥ + N` |
+| Bridge / Merge Menu / Reverse Normals | `⌘ + ⇧ + B` / `M` (`⌘ + ⌥ + M`) / `⌥ + N` |
 | Target Weld / Quad Draw / Make Live | `⇧ + RMB` / `N → Maya → Retopo` / Top Shelf |
 
 ### Animation, Timeline & Graph Editor
@@ -106,6 +106,6 @@
 | **Modes & Visibility** | `F8` Toggle · `F9/F10/F11` Vert/Edge/Face · `RMB` Component Pie · `Shift+RMB` Modeling Pie · `H / Ctrl+H / Shift+H / Alt+H / Ctrl+Shift+H` Hide |
 | **Selection** | `LMB Click` Face Center Handle (`Shift` toggle, `Ctrl` deselect) · `> / <` Grow/Shrink · `Ctrl+Shift+I` Invert · `Ctrl+F9/F10/F11` Convert · `Arrows` Pick Walk · `Alt+Arrows` Nudge · `B` (`Shift+[/]`) Soft Select · `Backspace` / `Ctrl+Backspace` Smart Delete |
 | **Pivot & Snap** | `Hold D` Edit Pivot (`D+V/C/X`) · `Alt+D` Pivot Pie · `Hold X/C/V/J` Snap (`Shift+J` Rel) · `1/2/3` (`PgUp/PgDn`) Smooth Preview |
-| **Modeling** | `Ctrl+D` / `Shift+D` / `Ctrl+Shift+D` Dup · `Alt+Shift+D` Delete History · `Ctrl+G` Group · `P / Shift+P` Parent/Unparent · `Ctrl+E` Extrude · `Ctrl+B` Bevel · `Ctrl+Shift+X` Multi-Cut · `Ctrl+Shift+B` Bridge · `Ctrl+Alt+M` Merge · `Alt+N` Flip Normals |
+| **Modeling** | `Ctrl+D` / `Shift+D` / `Ctrl+Shift+D` Dup · `Alt+Shift+D` Delete History · `Ctrl+G` Group · `P / Shift+P` Parent/Unparent · `Ctrl+E` Extrude · `Ctrl+B` Bevel · `Ctrl+Shift+X` Multi-Cut · `Ctrl+Shift+B` Bridge · `M` (`Ctrl+Alt+M`) Merge Menu · `Alt+N` Flip Normals |
 | **Animation & Graph** | `S` / `Shift+W/E/R` Keyframe · `Alt+V` Play · `Alt+Shift+V` Min Frame · `Alt+K` AutoKey · `,/.` Prev/Next Key · `Alt+,/.` Step Frame · Graph: `1/2/3/4/T`, `Alt+I` |
 | **UV Editor** | `RMB` UV Pie · `Q/W/E/R` Tools · `Ctrl+F12` Shell · `Shift+X` Cut · `Shift+S` Stitch · `Ctrl+U` Unfold · `Ctrl+L` Layout |

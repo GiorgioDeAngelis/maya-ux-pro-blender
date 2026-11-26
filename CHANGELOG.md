@@ -2,6 +2,11 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.5.3] - 2026-11-26
+### Changed & Fixed
+- **Native Merge Menu (`M`)**: replaced `Merge to Last` in the `Shift+RMB` Modeling Marking Menu with Blender's full Merge menu (`VIEW3D_MT_edit_mesh_merge`) and bound `M` (plus `⌘+⌥+M` / `Ctrl+Alt+M`) in `Mesh` Edit Mode.
+- **Maya `F` Frame Selected across Object & Component Modes**: bound bare `F` (`view3d.view_selected`) across `3D View`, `Object Mode`, `Mesh`, `Pose`, and `Curve` (overriding Blender's `F` Make Edge/Face in Edit Mesh so pressing `F` always focuses the selected object, vertex, edge, or face).
+
 ## [2.5.2] - 2026-11-26
 ### Fixed
 - Fixed `TypeError: enum "LAST" not found in ('CENTER', 'CURSOR', 'COLLAPSE')` in `maya_ux.merge_to_last` (`ops_modeling_pro.py`) when merging box-selected/edge/face components without an active vertex in `bm.select_history`, falling back cleanly to `CENTER`.
