@@ -2,6 +2,10 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.5.8] - 2026-11-26
+### Fixed
+- **Shrink (`<`) at 100% Mesh Selection (`ops_selection.py`)**: fixed Blender's no-op `mesh.select_less()` when all vertices, edges, or faces of a closed mesh or island are selected — `maya_ux.grow_shrink_selection` now steps back cleanly via the tracked Grow stack (`_GROW_HISTORY`) and peels open-mesh boundaries when starting from `Select All`.
+
 ## [2.5.7] - 2026-11-26
 ### Fixed & Improved
 - **Strict 1-Step Component Grow (`>`) / Shrink (`<`)**: in Edit Mode, each press now steps strictly 1 increment in the active component (`use_face_step=False` for **Vertex** and **Edge** modes so vertices grow `1→5→13` and edges grow `1→7→23`; `use_face_step=True` for **Face** mode `1→9→25`), with `repeat=False` so holding/tapping never over-steps, plus `BACK_SLASH` ISO fallback.

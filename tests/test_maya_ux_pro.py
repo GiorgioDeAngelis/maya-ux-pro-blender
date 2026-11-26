@@ -562,6 +562,49 @@ def test_selection_pickwalk_soft_and_delete():
         assert bpy.ops.maya_ux.grow_shrink_selection(action="SHRINK") == {"FINISHED"}
         assert tuple(ts.mesh_select_mode) == (False, False, True)
         assert sum(1 for f in bmesh.from_edit_mesh(grid.data).faces if f.select) == expected
+
+    # Open-boundary Shrink from Select All without prior Grow history (5x5 grid = 25 faces / 36 verts -> 9 interior faces / 16 interior verts)
+    _reset_scene()
+    ts = bpy.context.scene.tool_settings
+    bpy.ops.object.select_all(action="DESELECT")
+    bpy.ops.mesh.primitive_grid_add(x_subdivisions=5, y_subdivisions=5)
+    open_grid = bpy.context.active_object
+    bpy.ops.object.mode_set(mode="EDIT")
+    ops_selection._GROW_HISTORY.clear()
+    ts.mesh_select_mode = (False, False, True)
+    bpy.ops.mesh.select_all(action="SELECT")
+    assert bpy.ops.maya_ux.grow_shrink_selection(action="SHRINK") == {"FINISHED"}
+    assert sum(1 for f in bmesh.from_edit_mesh(open_grid.data).faces if f.select) == 9
+    ts.mesh_select_mode = (True, False, False)
+    bpy.ops.mesh.select_all(action="SELECT")
+    assert bpy.ops.maya_ux.grow_shrink_selection(action="SHRINK") == {"FINISHED"}
+    assert sum(1 for v in bmesh.from_edit_mesh(open_grid.data).verts if v.select) == 16
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    # Closed Cube: Grow to 100% selection (+ extra no-op Grow at max), then Shrink must step back cleanly
+    closed_cube = _reset_scene()
+    ts = bpy.context.scene.tool_settings
+    bpy.ops.object.mode_set(mode="EDIT")
+    for comp_mode, attr, seq_max, expected_shrink_seq in (
+        ((True, False, False), "verts", 8, (7, 4, 1)),
+        ((False, False, True), "faces", 6, (5, 1)),
+        ((False, True, False), "edges", 12, (11, 7, 1)),
+    ):
+        ops_selection._GROW_HISTORY.clear()
+        ts.mesh_select_mode = comp_mode
+        bpy.ops.mesh.select_all(action="DESELECT")
+        bm_c = bmesh.from_edit_mesh(closed_cube.data)
+        getattr(bm_c, attr).ensure_lookup_table()
+        getattr(bm_c, attr)[0].select_set(True)
+        bmesh.update_edit_mesh(closed_cube.data)
+        for _ in range(5):
+            bpy.ops.maya_ux.grow_shrink_selection(action="GROW")
+        assert sum(1 for el in getattr(bmesh.from_edit_mesh(closed_cube.data), attr) if el.select) == seq_max
+        actual_shrink_seq = []
+        for _ in expected_shrink_seq:
+            assert bpy.ops.maya_ux.grow_shrink_selection(action="SHRINK") == {"FINISHED"}
+            actual_shrink_seq.append(sum(1 for el in getattr(bmesh.from_edit_mesh(closed_cube.data), attr) if el.select))
+        assert tuple(actual_shrink_seq) == expected_shrink_seq, f"{attr}: expected {expected_shrink_seq}, got {actual_shrink_seq}"
     bpy.ops.object.mode_set(mode="OBJECT")
     print("[PASS] selection_pickwalk_soft_and_delete")
 
@@ -1230,9 +1273,10 @@ def test_maya_poly_count_hud():
 
 
 def test_unregistration():
-    from maya_ux_pro import ops_startup, ui_poly_hud
+    from maya_ux_pro import ops_selection, ops_startup, ui_poly_hud
 
     maya_ux_pro.unregister()
+    assert len(ops_selection._GROW_HISTORY) == 0
     assert ui_poly_hud._HUD_HANDLE is None
     assert ui_poly_hud._on_depsgraph_update not in bpy.app.handlers.depsgraph_update_post
     assert ops_startup._on_load_post not in bpy.app.handlers.load_post

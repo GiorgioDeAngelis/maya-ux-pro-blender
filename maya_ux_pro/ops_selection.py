@@ -10,6 +10,8 @@ from bpy_extras import view3d_utils
 from .preferences import get_prefs
 
 _PREV_FACE_CENTER: dict[int, bool] = {}
+_GROW_HISTORY: dict[tuple, list[tuple[tuple, tuple]]] = {}
+_MAX_GROW_HISTORY = 64
 
 
 def sync_face_center_overlay(enabled: bool, context=None):
@@ -375,6 +377,88 @@ def resolve_grow_shrink_action(action: str, event=None) -> str | None:
     return None
 
 
+def _active_mesh_elem_kind(context) -> str:
+    v_mode, e_mode, f_mode = tuple(context.tool_settings.mesh_select_mode)
+    if f_mode and not v_mode and not e_mode:
+        return "faces"
+    if e_mode and not v_mode and not f_mode:
+        return "edges"
+    return "verts"
+
+
+def _get_edit_mesh_objects(context) -> list[bpy.types.Object]:
+    objs = [o for o in (getattr(context, "objects_in_mode", None) or ()) if o is not None and o.type == "MESH"]
+    if not objs:
+        active = getattr(context, "active_object", None)
+        if active is not None and active.type == "MESH":
+            objs = [active]
+    return objs
+
+
+def _capture_edit_mesh_selection(objs: list[bpy.types.Object], elem_kind: str) -> tuple:
+    snap = []
+    for obj in objs:
+        bm = bmesh.from_edit_mesh(obj.data)
+        seq = getattr(bm, elem_kind)
+        seq.ensure_lookup_table()
+        snap.append((obj.name, len(seq), frozenset(el.index for el in seq if el.select)))
+    return tuple(snap)
+
+
+def _restore_edit_mesh_selection(objs: list[bpy.types.Object], elem_kind: str, snapshot: tuple) -> bool:
+    if len(objs) != len(snapshot):
+        return False
+    bm_seq_pairs = []
+    for obj, (snap_name, snap_len, indices) in zip(objs, snapshot):
+        if obj.name != snap_name:
+            return False
+        bm = bmesh.from_edit_mesh(obj.data)
+        seq = getattr(bm, elem_kind)
+        seq.ensure_lookup_table()
+        if len(seq) != snap_len:
+            return False
+        bm_seq_pairs.append((obj, bm, seq, indices))
+
+    for obj, bm, seq, indices in bm_seq_pairs:
+        for group in (bm.verts, bm.edges, bm.faces):
+            for el in group:
+                el.select = False
+        for idx in indices:
+            if 0 <= idx < len(seq):
+                seq[idx].select_set(True)
+        bm.select_flush_mode()
+        bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+    return True
+
+
+def _shrink_open_boundary(objs: list[bpy.types.Object], elem_kind: str) -> bool:
+    """Peel outer open-boundary components when all elements on an open island are selected."""
+    next_snapshot = []
+    changed = False
+    for obj in objs:
+        bm = bmesh.from_edit_mesh(obj.data)
+        seq = getattr(bm, elem_kind)
+        seq.ensure_lookup_table()
+        selected_indices = []
+        kept_indices = []
+        for el in seq:
+            if not el.select:
+                continue
+            selected_indices.append(el.index)
+            if elem_kind == "faces":
+                on_boundary = any(e.is_boundary for e in el.edges)
+            else:
+                on_boundary = bool(el.is_boundary)
+            if not on_boundary:
+                kept_indices.append(el.index)
+        if len(kept_indices) < len(selected_indices):
+            changed = True
+        next_snapshot.append((obj.name, len(seq), frozenset(kept_indices)))
+    if not changed:
+        return False
+    return _restore_edit_mesh_selection(objs, elem_kind, tuple(next_snapshot))
+
+
 class MAYA_UX_OT_grow_shrink_selection(bpy.types.Operator):
     """Maya Grow (>) / Shrink (<) selection across Mesh components, Curve, and UV Editor."""
 
@@ -407,10 +491,34 @@ class MAYA_UX_OT_grow_shrink_selection(bpy.types.Operator):
             v_mode, e_mode, f_mode = tuple(context.tool_settings.mesh_select_mode)
             # Only Face-only mode steps across face rings; Vert/Edge/Multi step strictly 1 hop in active component.
             face_step = bool(f_mode and not v_mode and not e_mode)
+            elem_kind = _active_mesh_elem_kind(context)
+            objs = _get_edit_mesh_objects(context)
+            hist_key = (tuple(o.name for o in objs), elem_kind)
+            before = _capture_edit_mesh_selection(objs, elem_kind)
+
             if resolved == "GROW":
                 bpy.ops.mesh.select_more(use_face_step=face_step)
+                after = _capture_edit_mesh_selection(objs, elem_kind)
+                if after != before:
+                    stack = _GROW_HISTORY.setdefault(hist_key, [])
+                    if stack and stack[-1][1] != before:
+                        stack.clear()
+                    stack.append((before, after))
+                    if len(stack) > _MAX_GROW_HISTORY:
+                        stack.pop(0)
             else:
                 bpy.ops.mesh.select_less(use_face_step=face_step)
+                after = _capture_edit_mesh_selection(objs, elem_kind)
+                stack = _GROW_HISTORY.get(hist_key)
+                if after != before:
+                    if stack and stack[-1][1] == before:
+                        stack.pop()
+                else:
+                    if stack and stack[-1][1] == before:
+                        prev_snap, _ = stack.pop()
+                        _restore_edit_mesh_selection(objs, elem_kind, prev_snap)
+                    else:
+                        _shrink_open_boundary(objs, elem_kind)
             return {"FINISHED"}
 
         if mode == "EDIT_CURVE":
@@ -455,5 +563,6 @@ def register():
 def unregister():
     sync_face_center_overlay(False)
     _PREV_FACE_CENTER.clear()
+    _GROW_HISTORY.clear()
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
