@@ -2,6 +2,10 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.5.4] - 2026-11-26
+### Added
+- **Object Mode `Shade Smooth` & `Shade Flat` in Viewport RMB Marking Menu**: added `Shade Smooth` (`object.shade_smooth`) and `Shade Flat` (`object.shade_flat`) directly inside the Object Mode Right-Click (`RMB`) Marking Menu (`VIEW3D_MT_maya_component_pie`, grouped above `Frame Selected (F)`) and in the Spacebar **Floating Maya Hotbox** (`Modeling & Pivot`).
+
 ## [2.5.3] - 2026-11-26
 ### Changed & Fixed
 - **Native Merge Menu (`M`)**: replaced `Merge to Last` in the `Shift+RMB` Modeling Marking Menu with Blender's full Merge menu (`VIEW3D_MT_edit_mesh_merge`) and bound `M` (plus `⌘+⌥+M` / `Ctrl+Alt+M`) in `Mesh` Edit Mode.

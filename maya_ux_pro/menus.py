@@ -34,11 +34,15 @@ class VIEW3D_MT_maya_component_pie(bpy.types.Menu):
         op = pie.operator("maya_ux.component_mode", text="Multi-Component", icon="UV_VERTEXSEL")
         op.mode = "MULTI"
 
-        # NE: Edge Loop (Edit) or Frame Selected (Object)
+        # NE: Edge Loop (Edit) or Object Shading & Frame Selected (Object)
         if context.mode == "EDIT_MESH":
             pie.operator("mesh.loop_multi_select", text="Select Edge Loop", icon="EDGESEL").ring = False
         else:
-            pie.operator("view3d.view_selected", text="Frame Selected (F)", icon="ZOOM_SELECTED")
+            col = pie.box().column(align=True)
+            col.operator("object.shade_smooth", text="Shade Smooth", icon="SHADING_RENDERED")
+            col.operator("object.shade_flat", text="Shade Flat", icon="SHADING_SOLID")
+            col.separator()
+            col.operator("view3d.view_selected", text="Frame Selected (F)", icon="ZOOM_SELECTED")
 
         # SW: Isolate Select
         pie.operator("maya_ux.isolate_select", text="Isolate Select", icon="HIDE_OFF")

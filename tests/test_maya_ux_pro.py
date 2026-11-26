@@ -976,6 +976,9 @@ def test_maya_spacebar_and_hotbox():
                 assert value in valid_vals, f"{op_id}.{attr}={value!r} not in {sorted(valid_vals)}"
 
     class _MockLayout:
+        def menu_pie(self):
+            return self
+
         def row(self, align=False):
             return self
 
@@ -1004,7 +1007,24 @@ def test_maya_spacebar_and_hotbox():
     fake_hotbox = SimpleNamespace(layout=_MockLayout())
     ops_hotbox.MAYA_UX_OT_hotbox_popup.draw(fake_hotbox, bpy.context)
     assert len(drawn_ops) >= 30, f"Expected >= 30 Hotbox buttons, got {len(drawn_ops)}"
+    assert "object.shade_smooth" in drawn_ops
+    assert "object.shade_flat" in drawn_ops
     assert bpy.ops.maya_ux.create_maya_workspace(workspace_name="Maya Pro") == {"FINISHED"}
+
+    # 7b. Object Mode RMB Marking Menu exposes Shade Smooth, Shade Flat, and Frame Selected
+    from maya_ux_pro import menus
+
+    cube = _reset_scene()
+    drawn_ops.clear()
+    fake_pie = SimpleNamespace(layout=_MockLayout())
+    menus.VIEW3D_MT_maya_component_pie.draw(fake_pie, bpy.context)
+    assert "object.shade_smooth" in drawn_ops
+    assert "object.shade_flat" in drawn_ops
+    assert "view3d.view_selected" in drawn_ops
+    assert bpy.ops.object.shade_smooth() == {"FINISHED"}
+    assert all(p.use_smooth for p in cube.data.polygons)
+    assert bpy.ops.object.shade_flat() == {"FINISHED"}
+    assert all(not p.use_smooth for p in cube.data.polygons)
 
     # 8. Cheatsheet updated & still macOS-safe (no "Alt")
     mac_sections = ui_cheatsheet._get_sections(is_mac=True)
