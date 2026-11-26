@@ -2,6 +2,10 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.5.2] - 2026-11-26
+### Fixed
+- Fixed `TypeError: enum "LAST" not found in ('CENTER', 'CURSOR', 'COLLAPSE')` in `maya_ux.merge_to_last` (`ops_modeling_pro.py`) when merging box-selected/edge/face components without an active vertex in `bm.select_history`, falling back cleanly to `CENTER`.
+
 ## [2.5.1] - 2026-11-25
 ### Fixed
 - Fixed `ReferenceError: BMesh data of type BMFace has been removed` in `maya_ux.select_face_center` by passing `(obj, face.index)` and holding live `BMesh` references via `apply_face_center_selection()`.

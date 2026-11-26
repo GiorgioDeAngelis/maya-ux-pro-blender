@@ -757,6 +757,20 @@ def test_v2_pro_tools():
     assert len(cube.data.vertices) == vert_count_before - 1
     assert any((v.co - dst_co).length < 1e-4 for v in cube.data.vertices)
 
+    # Merge to Last without active vertex in select_history (Box/Face/Edge select) falls back to CENTER cleanly
+    bpy.ops.object.mode_set(mode="EDIT")
+    bm = bmesh.from_edit_mesh(cube.data)
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bm.verts.ensure_lookup_table()
+    bm.select_history.clear()
+    bm.verts[0].select = True
+    bm.verts[1].select = True
+    bmesh.update_edit_mesh(cube.data)
+    assert bpy.ops.maya_ux.merge_to_last() == {"FINISHED"}
+    assert len(bmesh.from_edit_mesh(cube.data).verts) == 6
+    bpy.ops.object.mode_set(mode="OBJECT")
+    assert len(cube.data.vertices) == vert_count_before - 2
+
     # 2. Make Live + Quad Draw Retopology + Relax + Finish
     hipoly = _reset_scene()
     hipoly.name = "HighPolyHead"

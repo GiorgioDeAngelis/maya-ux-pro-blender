@@ -224,11 +224,22 @@ class MAYA_UX_OT_merge_to_last(bpy.types.Operator):
         if context.mode != "EDIT_MESH":
             self.report({"WARNING"}, "Switch to Edit Mode first")
             return {"CANCELLED"}
+        obj = getattr(context, "active_object", None)
+        has_active_vert = False
+        if obj is not None and obj.type == "MESH":
+            bm = bmesh.from_edit_mesh(obj.data)
+            has_active_vert = isinstance(bm.select_history.active, bmesh.types.BMVert)
+
+        if has_active_vert:
+            try:
+                return bpy.ops.mesh.merge(type="LAST")
+            except (TypeError, RuntimeError):
+                pass
         try:
-            bpy.ops.mesh.merge(type="LAST")
-        except RuntimeError:
-            bpy.ops.mesh.merge(type="CENTER")
-        return {"FINISHED"}
+            return bpy.ops.mesh.merge(type="CENTER")
+        except (TypeError, RuntimeError):
+            self.report({"WARNING"}, "Select at least 2 vertices/components to merge")
+            return {"CANCELLED"}
 
 
 CLASSES = (
