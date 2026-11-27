@@ -424,6 +424,8 @@ class MAYA_UX_OT_component_mode(bpy.types.Operator):
     )
 
     def execute(self, context):
+        from . import ops_selection
+
         obj = context.active_object
         prev_tool = _get_active_tool_id(context)
         if self.mode == "TOGGLE":
@@ -432,12 +434,14 @@ class MAYA_UX_OT_component_mode(bpy.types.Operator):
             target = "OBJECT" if context.mode == "EDIT_MESH" else "EDIT"
             bpy.ops.object.mode_set(mode=target)
             _sync_tool_after_mode_switch(context, prev_tool)
+            ops_selection.sync_component_selection_display(context, force=True)
             return {"FINISHED"}
 
         if self.mode == "OBJECT":
             if obj is not None and context.mode != "OBJECT":
                 bpy.ops.object.mode_set(mode="OBJECT")
                 _sync_tool_after_mode_switch(context, prev_tool)
+            ops_selection.sync_component_selection_display(context, force=True)
             return {"FINISHED"}
 
         if obj is None or obj.type != "MESH":
@@ -465,6 +469,7 @@ class MAYA_UX_OT_component_mode(bpy.types.Operator):
                 sp = _get_view3d_space(context)
                 if sp is not None:
                     sp.overlay.show_face_center = True
+        ops_selection.sync_component_selection_display(context, force=True)
         return {"FINISHED"}
 
 

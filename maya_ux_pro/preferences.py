@@ -48,6 +48,12 @@ def _on_face_center_update(self, context):
     keymap.rebuild_keymaps()
 
 
+def _on_component_display_update(self, context):
+    from . import ops_selection
+
+    ops_selection.sync_component_selection_display(context, force=True)
+
+
 def is_macos_layout(context=None) -> bool:
     """Return True when macOS / MacBook Pro keyboard & Trackpad layout is active."""
     prefs = get_prefs(context)
@@ -324,6 +330,12 @@ class MayaUXPreferences(bpy.types.AddonPreferences):
         default=True,
         update=_on_pref_update,
     )
+    isolate_component_display: BoolProperty(
+        name="Maya Isolated Component Highlight",
+        description="Highlight only the active component type (Vertex, Edge, or Face) in Edit Mode, hiding implied edge and face highlights",
+        default=True,
+        update=_on_component_display_update,
+    )
 
     def draw(self, context):
         layout = self.layout
@@ -398,6 +410,7 @@ class MayaUXPreferences(bpy.types.AddonPreferences):
         if self.maya_face_center_select:
             beh_box.prop(self, "face_center_hit_radius")
         beh_box.prop(self, "ortho_select_through")
+        beh_box.prop(self, "isolate_component_display")
         beh_box.prop(self, "clean_empty_new_scene")
         beh_box.prop(self, "clean_maya_startup_layout")
 
@@ -440,6 +453,7 @@ _DEFAULT_PREFS = SimpleNamespace(
     maya_face_center_select=True,
     face_center_hit_radius=10.0,
     ortho_select_through=True,
+    isolate_component_display=True,
 )
 
 

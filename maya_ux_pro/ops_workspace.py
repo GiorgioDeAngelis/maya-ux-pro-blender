@@ -24,6 +24,9 @@ def apply_maya_dark_theme(context=None):
     from .preferences import get_prefs
 
     ops_maya_axes.apply_maya_axis_colors(bool(getattr(get_prefs(ctx), "swap_axis_colors_yup", False)), ctx)
+    from . import ops_selection
+
+    ops_selection.reset_component_color_cache(ctx)
 
 
 class MAYA_UX_OT_apply_maya_theme(bpy.types.Operator):

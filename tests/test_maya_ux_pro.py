@@ -777,7 +777,32 @@ def test_selection_pickwalk_soft_and_delete():
     assert {f.index for f in bmesh.from_edit_mesh(ortho_cube.data).faces if f.select} == {0, 2}
     ops_selection.apply_face_center_selection_multi([ortho_cube], [(ortho_cube, 0), (ortho_cube, 2)], toggle=True)
     assert {f.index for f in bmesh.from_edit_mesh(ortho_cube.data).faces if f.select} == set()
-    bpy.ops.object.mode_set(mode="OBJECT")
+
+    # Maya Isolated Component Highlight: Vertex hides edges/faces, Edge hides faces, Face hides edges, Multi/Object restores
+    v3d_t = bpy.context.preferences.themes[0].view_3d
+    wire_rgb = tuple(round(float(c), 4) for c in v3d_t.wire_edit[:3])
+
+    assert bpy.ops.maya_ux.component_mode(mode="VERT") == {"FINISHED"}
+    assert tuple(round(float(c), 4) for c in v3d_t.edge_select[:3]) == wire_rgb
+    assert tuple(round(float(c), 4) for c in v3d_t.edge_mode_select[:3]) == wire_rgb
+    assert v3d_t.face_select[3] == 0.0 and v3d_t.face_mode_select[3] == 0.0 and v3d_t.editmesh_active[3] == 0.0
+
+    assert bpy.ops.maya_ux.component_mode(mode="EDGE") == {"FINISHED"}
+    assert tuple(round(float(c), 4) for c in v3d_t.edge_select[:3]) != wire_rgb
+    assert v3d_t.face_select[3] == 0.0 and v3d_t.face_mode_select[3] == 0.0 and v3d_t.editmesh_active[3] == 0.0
+
+    assert bpy.ops.maya_ux.component_mode(mode="FACE") == {"FINISHED"}
+    assert tuple(round(float(c), 4) for c in v3d_t.edge_select[:3]) == wire_rgb
+    assert tuple(round(float(c), 4) for c in v3d_t.edge_mode_select[:3]) == wire_rgb
+    assert v3d_t.face_select[3] > 0.05 and v3d_t.face_mode_select[3] > 0.05 and v3d_t.editmesh_active[3] > 0.05
+
+    assert bpy.ops.maya_ux.component_mode(mode="MULTI") == {"FINISHED"}
+    assert tuple(round(float(c), 4) for c in v3d_t.edge_select[:3]) != wire_rgb
+    assert v3d_t.face_select[3] > 0.05 and v3d_t.editmesh_active[3] > 0.05
+
+    assert bpy.ops.maya_ux.component_mode(mode="OBJECT") == {"FINISHED"}
+    assert tuple(round(float(c), 4) for c in v3d_t.edge_select[:3]) != wire_rgb
+    assert v3d_t.face_select[3] > 0.05 and v3d_t.editmesh_active[3] > 0.05
     print("[PASS] selection_pickwalk_soft_and_delete")
 
 
@@ -1448,6 +1473,8 @@ def test_unregistration():
     from maya_ux_pro import ops_selection, ops_startup, ui_poly_hud
 
     maya_ux_pro.unregister()
+    assert ops_selection._on_component_display_depsgraph not in bpy.app.handlers.depsgraph_update_post
+    assert len(ops_selection._SAVED_COMPONENT_COLORS) == 0
     assert len(ops_selection._GROW_HISTORY) == 0
     assert len(ops_selection._PICKWALK_STATE) == 0
     assert len(ops_selection._EDGE_LOOP_ORIGIN) == 0

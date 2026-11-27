@@ -5,6 +5,7 @@ from math import hypot
 import bmesh
 import bpy
 import gpu
+from bpy.app.handlers import persistent
 from bpy.props import BoolProperty, EnumProperty, FloatProperty
 from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
@@ -16,7 +17,131 @@ _PREV_FACE_CENTER: dict[int, bool] = {}
 _GROW_HISTORY: dict[tuple, list[tuple[tuple, tuple]]] = {}
 _PICKWALK_STATE: dict[str, dict] = {}
 _EDGE_LOOP_ORIGIN: dict[str, dict] = {}
+_SAVED_COMPONENT_COLORS: dict[str, tuple] = {}
+_LAST_COMPONENT_DISPLAY_KEY: tuple | None = None
+_MSGBUS_OWNER = object()
 _MAX_GROW_HISTORY = 64
+
+_DEFAULT_COMPONENT_FALLBACKS = {
+    "edge_select": (1.0, 0.6, 0.0),
+    "edge_mode_select": (1.0, 0.847, 0.0),
+    "face_select": (1.0, 0.639, 0.0, 0.2),
+    "face_mode_select": (1.0, 0.718, 0.0, 0.2),
+    "editmesh_active": (1.0, 1.0, 1.0, 0.5),
+}
+
+
+def _snapshot_component_colors(v3d) -> dict[str, tuple]:
+    if _SAVED_COMPONENT_COLORS:
+        return _SAVED_COMPONENT_COLORS
+    wire_rgb = tuple(round(float(c), 4) for c in v3d.wire_edit[:3])
+    for attr, fallback in _DEFAULT_COMPONENT_FALLBACKS.items():
+        if not hasattr(v3d, attr):
+            continue
+        cur = tuple(float(c) for c in getattr(v3d, attr))
+        if attr in {"edge_select", "edge_mode_select"}:
+            if tuple(round(float(c), 4) for c in cur[:3]) == wire_rgb:
+                cur = fallback
+        elif len(cur) >= 4 and cur[3] < 0.05:
+            cur = fallback
+        _SAVED_COMPONENT_COLORS[attr] = cur
+    return _SAVED_COMPONENT_COLORS
+
+
+def _tag_view3d_redraw(ctx):
+    wm = getattr(ctx, "window_manager", None)
+    if wm is None:
+        return
+    for win in wm.windows:
+        for area in win.screen.areas:
+            if area.type == "VIEW_3D":
+                area.tag_redraw()
+
+
+def restore_component_selection_display(context=None):
+    """Restore original Edit Mesh component highlight colors saved before isolation."""
+    global _LAST_COMPONENT_DISPLAY_KEY
+    ctx = context or bpy.context
+    prefs_root = getattr(ctx, "preferences", None)
+    if prefs_root is not None and prefs_root.themes and _SAVED_COMPONENT_COLORS:
+        v3d = prefs_root.themes[0].view_3d
+        for attr, orig in _SAVED_COMPONENT_COLORS.items():
+            if hasattr(v3d, attr):
+                setattr(v3d, attr, orig)
+        _tag_view3d_redraw(ctx)
+    _LAST_COMPONENT_DISPLAY_KEY = None
+
+
+def reset_component_color_cache(context=None):
+    """Refresh saved theme color baseline (e.g. after applying a new theme)."""
+    global _LAST_COMPONENT_DISPLAY_KEY
+    _SAVED_COMPONENT_COLORS.clear()
+    _LAST_COMPONENT_DISPLAY_KEY = None
+    sync_component_selection_display(context, force=True)
+
+
+def sync_component_selection_display(context=None, force: bool = False):
+    """Show only active component highlights (Vert/Edge/Face) in Edit Mesh, like Maya."""
+    global _LAST_COMPONENT_DISPLAY_KEY
+    ctx = context or bpy.context
+    prefs_root = getattr(ctx, "preferences", None)
+    if prefs_root is None or not prefs_root.themes:
+        return
+    if not bool(getattr(get_prefs(ctx), "isolate_component_display", True)):
+        if _SAVED_COMPONENT_COLORS:
+            restore_component_selection_display(ctx)
+            _SAVED_COMPONENT_COLORS.clear()
+        return
+
+    mode = getattr(ctx, "mode", "OBJECT")
+    ts = getattr(ctx, "tool_settings", None)
+    sel_mode = tuple(bool(x) for x in ts.mesh_select_mode) if ts is not None else (False, False, False)
+    v3d = prefs_root.themes[0].view_3d
+    wire_rgb = tuple(float(c) for c in v3d.wire_edit[:3])
+    key = (mode, sel_mode if mode == "EDIT_MESH" else None, tuple(round(c, 4) for c in wire_rgb))
+    if not force and key == _LAST_COMPONENT_DISPLAY_KEY:
+        return
+    _LAST_COMPONENT_DISPLAY_KEY = key
+
+    saved = _snapshot_component_colors(v3d)
+    is_vert_only = mode == "EDIT_MESH" and sel_mode == (True, False, False)
+    is_edge_only = mode == "EDIT_MESH" and sel_mode == (False, True, False)
+    is_face_only = mode == "EDIT_MESH" and sel_mode == (False, False, True)
+
+    if not (is_vert_only or is_edge_only or is_face_only):
+        for attr, orig in saved.items():
+            if hasattr(v3d, attr):
+                setattr(v3d, attr, orig)
+        _tag_view3d_redraw(ctx)
+        return
+
+    hide_edges = is_vert_only or is_face_only
+    hide_faces = is_vert_only or is_edge_only
+
+    for attr in ("edge_select", "edge_mode_select"):
+        if not hasattr(v3d, attr):
+            continue
+        if hide_edges:
+            cur = getattr(v3d, attr)
+            setattr(v3d, attr, wire_rgb + tuple(cur[3:]) if len(cur) > 3 else wire_rgb)
+        elif attr in saved:
+            setattr(v3d, attr, saved[attr])
+
+    for attr in ("face_select", "face_mode_select", "editmesh_active"):
+        if not hasattr(v3d, attr) or attr not in saved:
+            continue
+        orig = saved[attr]
+        if hide_faces:
+            setattr(v3d, attr, (orig[0], orig[1], orig[2], 0.0))
+        else:
+            setattr(v3d, attr, orig)
+
+    _tag_view3d_redraw(ctx)
+
+
+@persistent
+def _on_component_display_depsgraph(scene, depsgraph=None):
+    sync_component_selection_display(bpy.context)
 
 
 def is_ortho_component_view(context) -> bool:
@@ -453,6 +578,7 @@ class MAYA_UX_OT_convert_selection(bpy.types.Operator):
             bpy.ops.object.mode_set(mode="EDIT")
 
         bpy.ops.mesh.select_mode(use_extend=False, use_expand=True, type=self.target)
+        sync_component_selection_display(context, force=True)
         return {"FINISHED"}
 
 
@@ -1307,9 +1433,29 @@ def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     sync_face_center_overlay(bool(getattr(get_prefs(), "maya_face_center_select", True)))
+    bpy.msgbus.subscribe_rna(
+        key=(bpy.types.ToolSettings, "mesh_select_mode"),
+        owner=_MSGBUS_OWNER,
+        args=(),
+        notify=lambda: sync_component_selection_display(force=True),
+    )
+    bpy.msgbus.subscribe_rna(
+        key=(bpy.types.Object, "mode"),
+        owner=_MSGBUS_OWNER,
+        args=(),
+        notify=lambda: sync_component_selection_display(force=True),
+    )
+    if _on_component_display_depsgraph not in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.append(_on_component_display_depsgraph)
+    sync_component_selection_display(force=True)
 
 
 def unregister():
+    bpy.msgbus.clear_by_owner(_MSGBUS_OWNER)
+    if _on_component_display_depsgraph in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(_on_component_display_depsgraph)
+    restore_component_selection_display()
+    _SAVED_COMPONENT_COLORS.clear()
     sync_face_center_overlay(False)
     _PREV_FACE_CENTER.clear()
     _GROW_HISTORY.clear()

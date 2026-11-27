@@ -2,6 +2,11 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.6.2] - 2026-11-27
+### Added
+- **Maya Isolated Component Selection Display (`ops_selection.py`, `preferences.py`, `ops_viewport.py`)**:
+  - Added automatic per-mode selection highlight isolation (`isolate_component_display`, default ON): in **Vertex Mode** only selected vertices are highlighted (implied edges/faces stay hidden), in **Edge Mode** only selected edges are highlighted (implied faces stay hidden), and in **Face Mode** only selected faces are highlighted (`Multi-Component` and `Object Mode` automatically restore full user theme highlights).
+
 ## [2.6.1] - 2026-11-27
 ### Fixed
 - **Orthographic Select-Through with `Move (W)` / `Rotate (E)` / `Scale (R)` / `Transform (T)` Active**: bound `maya_ux.ortho_select_box` to `3D View Tool: Select Box (fallback)` in addition to `3D View Tool: Select Box`, so dragging a box selection in Ortho views works with Select-Through regardless of whether `Select Box (Q)` or a transform gizmo tool (`W/E/R/T`) is active, and hardened Quad View marquee start coordinates.
