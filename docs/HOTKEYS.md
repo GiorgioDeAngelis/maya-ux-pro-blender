@@ -1,4 +1,4 @@
-# Maya UX Pro — Complete Hotkey Reference (`v2.5.10`)
+# Maya UX Pro — Complete Hotkey Reference (`v2.5.11`)
 
 > Press **`?`** (or **`F1`**) inside Blender's 3D Viewport at any time to open the live searchable **Hotkey Reference & Equivalence** dialog.
 
@@ -47,7 +47,7 @@
 | Grow / Shrink Selection (1 step per press) | `>` / `<` (Italian/EU ISO `<>` or `⇧ + .` / `⇧ + ,`) |
 | Invert Selection | `⌘ + ⇧ + I` |
 | Convert to Vert / Edge / Face | `⌃ + F9` / `⌃ + F10` / `⌃ + F11` |
-| Pick Walk (Hierarchy / Edge Loops) | `↑` / `↓` / `←` / `→` (`→` Edge Loop · `←` back to seed edge or deselect loop · `↑`/`↓` step loop · `⇧+↑/↓` keep loops) |
+| Pick Walk (Hierarchy / Edge Loops) | `↑` / `↓` / `←` / `→` (`→` Edge Loop · `←` back to seed edge or deselect loop · `↑`/`↓` step loop · `⇧+↑/↓` extend & LIFO decrement) |
 | Screen-Space Nudge | `⌥ + ↑ / ↓ / ← / →` |
 | Soft Select / Radius - / + | `B` / `⇧ + [` / `⇧ + ]` |
 | Smart Delete / Dissolve Edge | `⌫ Delete` (keep verts) / `⌘ + ⌫ Delete` (remove verts) |

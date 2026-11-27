@@ -675,16 +675,36 @@ def test_selection_pickwalk_soft_and_delete():
     assert bpy.ops.maya_ux.pick_walk(direction="UP", extend=False) == {"FINISHED"}
     assert {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select} == loop1
 
-    assert bpy.ops.maya_ux.pick_walk(direction="DOWN", extend=True) == {"FINISHED"}
-    ext1 = {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select}
-    assert ext1 == (loop1 | loop2) and len(ext1) == 10
+    # Fresh extend test from loop0 (5 edges): Shift+UP x2 extends to 10->15, Shift+DOWN x2 pops LIFO 10->5, then Shift+DOWN x2 extends opposite 10->15, Shift+UP x2 pops back to 5
+    ops_selection._PICKWALK_STATE.clear()
+    ops_selection._restore_edit_mesh_selection([pw_grid], "edges", ((pw_grid.name, len(bmesh.from_edit_mesh(pw_grid.data).edges), frozenset(loop0)),))
 
     assert bpy.ops.maya_ux.pick_walk(direction="UP", extend=True) == {"FINISHED"}
-    ext2 = {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select}
-    assert ext2 == (loop0 | loop1 | loop2) and len(ext2) == 15
+    up1 = {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select}
+    assert len(up1) == 10 and loop0.issubset(up1)
+    assert bpy.ops.maya_ux.pick_walk(direction="UP", extend=True) == {"FINISHED"}
+    up2 = {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select}
+    assert len(up2) == 15 and up1.issubset(up2)
+
+    assert bpy.ops.maya_ux.pick_walk(direction="DOWN", extend=True) == {"FINISHED"}
+    assert {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select} == up1
+    assert bpy.ops.maya_ux.pick_walk(direction="DOWN", extend=True) == {"FINISHED"}
+    assert {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select} == loop0
+
+    assert bpy.ops.maya_ux.pick_walk(direction="DOWN", extend=True) == {"FINISHED"}
+    dn1 = {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select}
+    assert dn1 == (loop0 | loop1) and len(dn1) == 10
+    assert bpy.ops.maya_ux.pick_walk(direction="DOWN", extend=True) == {"FINISHED"}
+    dn2 = {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select}
+    assert dn2 == (loop0 | loop1 | loop2) and len(dn2) == 15
+
+    assert bpy.ops.maya_ux.pick_walk(direction="UP", extend=True) == {"FINISHED"}
+    assert {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select} == dn1
+    assert bpy.ops.maya_ux.pick_walk(direction="UP", extend=True) == {"FINISHED"}
+    assert {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select} == loop0
     bpy.ops.object.mode_set(mode="OBJECT")
 
-    # Closed Cylinder: step across circular rings cleanly without side flip
+    # Closed Cylinder: step across circular rings cleanly without side flip, extend & decrement
     bpy.ops.wm.read_factory_settings(use_empty=True)
     ts = bpy.context.scene.tool_settings
     bpy.ops.mesh.primitive_cylinder_add(vertices=12, end_fill_type="NOTHING")
@@ -711,6 +731,8 @@ def test_selection_pickwalk_soft_and_delete():
     assert len(ring1) == 12 and ring1.isdisjoint(ring0)
     assert bpy.ops.maya_ux.pick_walk(direction="UP", extend=True) == {"FINISHED"}
     assert {e.index for e in bmesh.from_edit_mesh(cyl.data).edges if e.select} == (ring0 | ring1)
+    assert bpy.ops.maya_ux.pick_walk(direction="DOWN", extend=True) == {"FINISHED"}
+    assert {e.index for e in bmesh.from_edit_mesh(cyl.data).edges if e.select} == ring1
     bpy.ops.object.mode_set(mode="OBJECT")
     print("[PASS] selection_pickwalk_soft_and_delete")
 

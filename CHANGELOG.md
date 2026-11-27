@@ -2,6 +2,10 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.5.11] - 2026-11-27
+### Improved
+- **Ordered LIFO Decrement for `Shift + ↓` / `Shift + ↑` (`ops_selection.py`)**: extending Edge Loops with `Shift + ↑` and then pressing `Shift + ↓` now cleanly pops the added edge loops back in reverse order down to the starting anchor loop before extending in the opposite direction (symmetric in both directions).
+
 ## [2.5.10] - 2026-11-27
 ### Improved
 - **`LEFT_ARROW` (`←`) Edge Loop Pick Walk (`ops_selection.py`)**: pressing `←` on an Edge Loop that was expanded from a single edge via `→` returns cleanly to that original single edge; pressing `←` on any other Edge Loop (after `↓`/`↑` stepping or direct loop selection) deselects the entire Edge Loop.

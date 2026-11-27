@@ -326,35 +326,118 @@ def _pick_walk_edge_loop(context, obj: bpy.types.Object, direction: str, extend:
         return False
 
     state = _PICKWALK_STATE.get(obj.name)
-    state_valid = (
+    state_matches_sel = (
         state is not None
         and state.get("edge_count") == len(bm.edges)
         and state.get("all_selected") == cur_sel
-        and state.get("extend") == extend
     )
 
-    opp_dir = "UP" if direction == "DOWN" else "DOWN"
     target: frozenset[int] | None = None
 
-    if state_valid and extend:
-        ends = state.get("ends", {})
-        frontier, prev = ends.get(direction, (set(cur_sel), set()))
-        sides = compute_parallel_edge_loops(bm, set(frontier))
-        candidates = [s for s in sides if not (s & prev)]
-        if not candidates:
-            return False
-        target = candidates[0] if len(candidates) == 1 else _rank_sides_for_direction(context, bm, obj.matrix_world, set(frontier), candidates, direction)
-        if target is None:
-            return False
-        new_sel = frozenset(cur_sel | target)
-        ends[direction] = (target, set(frontier))
-        _PICKWALK_STATE[obj.name] = {
-            "edge_count": len(bm.edges),
-            "all_selected": new_sel,
-            "extend": True,
-            "ends": ends,
-        }
-    elif state_valid and not extend:
+    if extend:
+        if state_matches_sel and state.get("extend") is True:
+            loops = list(state.get("loops", (cur_sel,)))
+            extend_dir = state.get("extend_dir")
+            last_popped = state.get("last_popped")
+            last_popped_dir = state.get("last_popped_dir")
+
+            if len(loops) > 1 and extend_dir is not None and direction != extend_dir:
+                popped = loops.pop()
+                new_sel = frozenset().union(*loops)
+                _PICKWALK_STATE[obj.name] = {
+                    "edge_count": len(bm.edges),
+                    "all_selected": new_sel,
+                    "extend": True,
+                    "loops": loops,
+                    "extend_dir": extend_dir if len(loops) > 1 else None,
+                    "last_popped": popped if len(loops) == 1 else None,
+                    "last_popped_dir": extend_dir if len(loops) == 1 else None,
+                }
+            elif len(loops) > 1:
+                frontier = loops[-1]
+                prev = loops[-2]
+                sides = compute_parallel_edge_loops(bm, set(frontier))
+                candidates = [s for s in sides if not (s & prev) and not (s <= cur_sel)]
+                if not candidates:
+                    return False
+                target = (
+                    candidates[0]
+                    if len(candidates) == 1
+                    else _rank_sides_for_direction(context, bm, obj.matrix_world, set(frontier), candidates, direction)
+                )
+                if target is None:
+                    return False
+                loops.append(target)
+                new_sel = frozenset(cur_sel | target)
+                _PICKWALK_STATE[obj.name] = {
+                    "edge_count": len(bm.edges),
+                    "all_selected": new_sel,
+                    "extend": True,
+                    "loops": loops,
+                    "extend_dir": direction,
+                    "last_popped": None,
+                    "last_popped_dir": None,
+                }
+            else:
+                anchor = loops[0]
+                sides = compute_parallel_edge_loops(bm, set(anchor))
+                if not sides:
+                    return False
+                if last_popped is not None and last_popped_dir is not None:
+                    if direction == last_popped_dir:
+                        chosen = [s for s in sides if s & last_popped]
+                    else:
+                        chosen = [s for s in sides if not (s & last_popped)]
+                    target = (
+                        chosen[0]
+                        if len(chosen) == 1
+                        else _rank_sides_for_direction(context, bm, obj.matrix_world, set(anchor), chosen or sides, direction)
+                    )
+                else:
+                    target = _rank_sides_for_direction(context, bm, obj.matrix_world, set(anchor), sides, direction)
+                if target is None:
+                    return False
+                loops = [anchor, target]
+                new_sel = frozenset(anchor | target)
+                _PICKWALK_STATE[obj.name] = {
+                    "edge_count": len(bm.edges),
+                    "all_selected": new_sel,
+                    "extend": True,
+                    "loops": loops,
+                    "extend_dir": direction,
+                    "last_popped": None,
+                    "last_popped_dir": None,
+                }
+        else:
+            sides = compute_parallel_edge_loops(bm, set(cur_sel))
+            if not sides:
+                return False
+            if state_matches_sel and state.get("extend") is False:
+                prev = set(state["prev_loop"])
+                if direction == state["last_dir"]:
+                    candidates = [s for s in sides if not (s & prev)] or sides
+                else:
+                    candidates = [s for s in sides if s & prev] or sides
+                target = (
+                    candidates[0]
+                    if len(candidates) == 1
+                    else _rank_sides_for_direction(context, bm, obj.matrix_world, set(cur_sel), candidates, direction)
+                )
+            else:
+                target = _rank_sides_for_direction(context, bm, obj.matrix_world, set(cur_sel), sides, direction)
+            if target is None:
+                return False
+            new_sel = frozenset(cur_sel | target)
+            _PICKWALK_STATE[obj.name] = {
+                "edge_count": len(bm.edges),
+                "all_selected": new_sel,
+                "extend": True,
+                "loops": [cur_sel, target],
+                "extend_dir": direction,
+                "last_popped": None,
+                "last_popped_dir": None,
+            }
+    elif state_matches_sel and state.get("extend") is False:
         frontier = set(state["frontier"])
         prev = set(state["prev_loop"])
         sides = compute_parallel_edge_loops(bm, frontier)
@@ -364,10 +447,18 @@ def _pick_walk_edge_loop(context, obj: bpy.types.Object, direction: str, extend:
             candidates = [s for s in sides if not (s & prev)]
             if not candidates:
                 return False
-            target = candidates[0] if len(candidates) == 1 else _rank_sides_for_direction(context, bm, obj.matrix_world, frontier, candidates, direction)
+            target = (
+                candidates[0]
+                if len(candidates) == 1
+                else _rank_sides_for_direction(context, bm, obj.matrix_world, frontier, candidates, direction)
+            )
         else:
             back_sides = [s for s in sides if s & prev]
-            target = back_sides[0] if back_sides else _rank_sides_for_direction(context, bm, obj.matrix_world, frontier, sides, direction)
+            target = (
+                back_sides[0]
+                if back_sides
+                else _rank_sides_for_direction(context, bm, obj.matrix_world, frontier, sides, direction)
+            )
         if target is None:
             return False
         new_sel = target
@@ -386,27 +477,15 @@ def _pick_walk_edge_loop(context, obj: bpy.types.Object, direction: str, extend:
         target = _rank_sides_for_direction(context, bm, obj.matrix_world, set(cur_sel), sides, direction)
         if target is None:
             return False
-        if extend:
-            new_sel = frozenset(cur_sel | target)
-            _PICKWALK_STATE[obj.name] = {
-                "edge_count": len(bm.edges),
-                "all_selected": new_sel,
-                "extend": True,
-                "ends": {
-                    direction: (target, set(cur_sel)),
-                    opp_dir: (cur_sel, set(target)),
-                },
-            }
-        else:
-            new_sel = target
-            _PICKWALK_STATE[obj.name] = {
-                "edge_count": len(bm.edges),
-                "all_selected": new_sel,
-                "extend": False,
-                "frontier": target,
-                "prev_loop": cur_sel,
-                "last_dir": direction,
-            }
+        new_sel = target
+        _PICKWALK_STATE[obj.name] = {
+            "edge_count": len(bm.edges),
+            "all_selected": new_sel,
+            "extend": False,
+            "frontier": target,
+            "prev_loop": cur_sel,
+            "last_dir": direction,
+        }
 
     _EDGE_LOOP_ORIGIN.pop(obj.name, None)
     return _restore_edit_mesh_selection([obj], "edges", ((obj.name, len(bm.edges), new_sel),))
