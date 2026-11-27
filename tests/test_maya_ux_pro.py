@@ -626,6 +626,7 @@ def test_selection_pickwalk_soft_and_delete():
     bpy.ops.object.mode_set(mode="EDIT")
     ts.mesh_select_mode = (False, True, False)
     ops_selection._PICKWALK_STATE.clear()
+    ops_selection._EDGE_LOOP_ORIGIN.clear()
     bpy.ops.mesh.select_all(action="DESELECT")
     bm_pw = bmesh.from_edit_mesh(pw_grid.data)
     bm_pw.edges.ensure_lookup_table()
@@ -634,16 +635,38 @@ def test_selection_pickwalk_soft_and_delete():
         (e for e in bm_pw.edges if not e.is_boundary and abs(e.verts[0].co.y - e.verts[1].co.y) < 1e-4),
         key=lambda e: abs((e.verts[0].co.y + e.verts[1].co.y) * 0.5) + abs((e.verts[0].co.x + e.verts[1].co.x) * 0.5),
     )
+    start_edge_idx = start_edge.index
     start_edge.select_set(True)
     bmesh.update_edit_mesh(pw_grid.data)
 
+    # RIGHT selects full loop; LEFT immediately returns to exact originating single edge
     assert bpy.ops.maya_ux.pick_walk(direction="RIGHT", extend=False) == {"FINISHED"}
     loop0 = {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select}
     assert len(loop0) == 5
+    assert bpy.ops.maya_ux.pick_walk(direction="LEFT", extend=False) == {"FINISHED"}
+    assert {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select} == {start_edge_idx}
+
+    # Re-expand with RIGHT, then walk DOWN/UP/Shift+DOWN/Shift+UP
+    assert bpy.ops.maya_ux.pick_walk(direction="RIGHT", extend=False) == {"FINISHED"}
+    assert {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select} == loop0
 
     assert bpy.ops.maya_ux.pick_walk(direction="DOWN", extend=False) == {"FINISHED"}
     loop1 = {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select}
     assert len(loop1) == 5 and loop1.isdisjoint(loop0)
+
+    # LEFT on a jumped loop (not expanded from 1 edge) deselects the entire loop
+    assert bpy.ops.maya_ux.pick_walk(direction="LEFT", extend=False) == {"FINISHED"}
+    assert {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select} == set()
+
+    # Re-select loop1 directly (multi-edge loop without single-edge seed) -> LEFT deselects; re-seed -> walk continues
+    ops_selection._restore_edit_mesh_selection([pw_grid], "edges", ((pw_grid.name, len(bmesh.from_edit_mesh(pw_grid.data).edges), frozenset(loop1)),))
+    assert bpy.ops.maya_ux.pick_walk(direction="LEFT", extend=False) == {"FINISHED"}
+    assert {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select} == set()
+
+    ops_selection._restore_edit_mesh_selection([pw_grid], "edges", ((pw_grid.name, len(bmesh.from_edit_mesh(pw_grid.data).edges), frozenset({start_edge_idx})),))
+    assert bpy.ops.maya_ux.pick_walk(direction="RIGHT", extend=False) == {"FINISHED"}
+    assert bpy.ops.maya_ux.pick_walk(direction="DOWN", extend=False) == {"FINISHED"}
+    assert {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select} == loop1
 
     assert bpy.ops.maya_ux.pick_walk(direction="DOWN", extend=False) == {"FINISHED"}
     loop2 = {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select}
@@ -1361,6 +1384,7 @@ def test_unregistration():
     maya_ux_pro.unregister()
     assert len(ops_selection._GROW_HISTORY) == 0
     assert len(ops_selection._PICKWALK_STATE) == 0
+    assert len(ops_selection._EDGE_LOOP_ORIGIN) == 0
     assert ui_poly_hud._HUD_HANDLE is None
     assert ui_poly_hud._on_depsgraph_update not in bpy.app.handlers.depsgraph_update_post
     assert ops_startup._on_load_post not in bpy.app.handlers.load_post

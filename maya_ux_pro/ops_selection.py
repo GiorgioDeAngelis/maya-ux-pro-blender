@@ -13,6 +13,7 @@ from .preferences import get_prefs
 _PREV_FACE_CENTER: dict[int, bool] = {}
 _GROW_HISTORY: dict[tuple, list[tuple[tuple, tuple]]] = {}
 _PICKWALK_STATE: dict[str, dict] = {}
+_EDGE_LOOP_ORIGIN: dict[str, dict] = {}
 _MAX_GROW_HISTORY = 64
 
 
@@ -407,6 +408,7 @@ def _pick_walk_edge_loop(context, obj: bpy.types.Object, direction: str, extend:
                 "last_dir": direction,
             }
 
+    _EDGE_LOOP_ORIGIN.pop(obj.name, None)
     return _restore_edit_mesh_selection([obj], "edges", ((obj.name, len(bm.edges), new_sel),))
 
 
@@ -422,8 +424,8 @@ class MAYA_UX_OT_pick_walk(bpy.types.Operator):
         items=[
             ("UP", "Up / Prev Loop", "Select parent object or step parallel edge loop up"),
             ("DOWN", "Down / Next Loop", "Select first child object or step parallel edge loop down"),
-            ("LEFT", "Prev / Edge Loop", "Select previous sibling or full edge loop"),
-            ("RIGHT", "Next / Edge Loop", "Select next sibling or full edge loop"),
+            ("LEFT", "Prev / Return or Deselect Loop", "Select previous sibling, return to seed edge, or deselect edge loop"),
+            ("RIGHT", "Next / Select Edge Loop", "Select next sibling or full edge loop"),
         ],
         default="UP",
     )
@@ -442,11 +444,33 @@ class MAYA_UX_OT_pick_walk(bpy.types.Operator):
             if active.type != "MESH" or not bool(context.tool_settings.mesh_select_mode[1]):
                 return {"PASS_THROUGH"}
             bm = bmesh.from_edit_mesh(active.data)
-            if not any(e.select and not e.hide for e in bm.edges):
+            bm.edges.ensure_lookup_table()
+            cur_sel = frozenset(e.index for e in bm.edges if e.select and not e.hide)
+            if not cur_sel:
                 return {"CANCELLED"}
-            if self.direction in {"RIGHT", "LEFT"}:
+            edge_count = len(bm.edges)
+            if self.direction == "RIGHT":
                 _select_edge_loop_multi()
+                after_bm = bmesh.from_edit_mesh(active.data)
+                after_bm.edges.ensure_lookup_table()
+                after_sel = frozenset(e.index for e in after_bm.edges if e.select and not e.hide)
                 _PICKWALK_STATE.pop(active.name, None)
+                if len(cur_sel) == 1 and len(after_sel) > 1:
+                    _EDGE_LOOP_ORIGIN[active.name] = {
+                        "edge_count": edge_count,
+                        "seed": cur_sel,
+                        "loop": after_sel,
+                    }
+                elif after_sel != cur_sel:
+                    _EDGE_LOOP_ORIGIN.pop(active.name, None)
+                return {"FINISHED"}
+            if self.direction == "LEFT":
+                _PICKWALK_STATE.pop(active.name, None)
+                origin = _EDGE_LOOP_ORIGIN.pop(active.name, None)
+                if origin is not None and origin["edge_count"] == edge_count and origin["loop"] == cur_sel:
+                    _restore_edit_mesh_selection([active], "edges", ((active.name, edge_count, origin["seed"]),))
+                else:
+                    _restore_edit_mesh_selection([active], "edges", ((active.name, edge_count, frozenset()),))
                 return {"FINISHED"}
             _pick_walk_edge_loop(context, active, self.direction, self.extend)
             return {"FINISHED"}
@@ -760,5 +784,6 @@ def unregister():
     _PREV_FACE_CENTER.clear()
     _GROW_HISTORY.clear()
     _PICKWALK_STATE.clear()
+    _EDGE_LOOP_ORIGIN.clear()
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)

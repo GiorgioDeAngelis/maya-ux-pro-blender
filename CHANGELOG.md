@@ -2,6 +2,10 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.5.10] - 2026-11-27
+### Improved
+- **`LEFT_ARROW` (`←`) Edge Loop Pick Walk (`ops_selection.py`)**: pressing `←` on an Edge Loop that was expanded from a single edge via `→` returns cleanly to that original single edge; pressing `←` on any other Edge Loop (after `↓`/`↑` stepping or direct loop selection) deselects the entire Edge Loop.
+
 ## [2.5.9] - 2026-11-27
 ### Added & Fixed
 - **Maya Edge Loop Pick Walk (`↑ / ↓ / ← / →` and `⇧ + ↑ / ↓` in Mesh Edge Mode)**:
