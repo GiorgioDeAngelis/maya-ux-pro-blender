@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections import deque
 
 import bmesh
@@ -13,6 +14,7 @@ from bpy.props import (
     PointerProperty,
     StringProperty,
 )
+from bpy_extras import view3d_utils
 from mathutils import Euler, Matrix, Vector
 
 from .preferences import get_prefs
@@ -24,13 +26,25 @@ _EXTRUDE_MSGBUS_OWNER = object()
 
 
 def is_extrude_session_active() -> bool:
-    """Return True while the all-in-one Extrude Transform manipulator session is active."""
+    """Return True while the Maya Extrude Show Manipulator session is active."""
     return _EXTRUDE_SESSION_ACTIVE
 
 
 def get_pre_extrude_tool() -> str:
     """Return the non-transform tool saved before entering Extrude mode."""
     return _PRE_EXTRUDE_TOOL if _PRE_EXTRUDE_TOOL != "builtin.transform" else "builtin.select_box"
+
+
+def _set_view3d_header_text(context, text: str | None):
+    ctx = context or bpy.context
+    wm = getattr(ctx, "window_manager", None)
+    if wm is None:
+        return
+    for win in wm.windows:
+        for area in win.screen.areas:
+            if area.type == "VIEW_3D":
+                area.header_text_set(text)
+                area.tag_redraw()
 
 
 def _set_view3d_tool_safe(context, tool_id: str):
@@ -79,7 +93,7 @@ def _set_view3d_tool_safe(context, tool_id: str):
 
 
 def start_extrude_session(context, space: str):
-    """Enter Extrude session and activate all-in-one Transform gizmo only for Extrude."""
+    """Enter Extrude session and show the dedicated Maya Extrude 3D Show Manipulator."""
     global _EXTRUDE_SESSION_ACTIVE, _PRE_EXTRUDE_TOOL, _PRE_EXTRUDE_ORIENT
     from . import ops_viewport
 
@@ -98,11 +112,16 @@ def start_extrude_session(context, space: str):
             slots[0].type = "NORMAL" if space == "LOCAL" else "GLOBAL"
 
     if bool(getattr(get_prefs(ctx), "extrude_activate_gizmo", True)):
-        _set_view3d_tool_safe(ctx, "builtin.transform")
+        # Hide overlapping toolbar Move/Rotate/Scale gizmo while custom 3D Extrude Manipulator is visible.
+        _set_view3d_tool_safe(ctx, "builtin.select_box")
+    _set_view3d_header_text(
+        ctx,
+        f"Maya Extrude [{space.title()}]: Blue Arrow = Normal Push | Center Cube = Uniform Scale | G = Repeat Extrude | Q/W/E/R = Exit",
+    )
 
 
 def end_extrude_session(context=None, restore_tool: bool = True):
-    """Exit Extrude session, restore orientation, and exit the all-in-one Transform gizmo."""
+    """Exit Extrude session, hide Extrude manipulator, and restore prior tool & orientation."""
     global _EXTRUDE_SESSION_ACTIVE
     if not _EXTRUDE_SESSION_ACTIVE:
         return
@@ -116,6 +135,7 @@ def end_extrude_session(context=None, restore_tool: bool = True):
                 slots[0].type = _PRE_EXTRUDE_ORIENT
             except (TypeError, ValueError):
                 slots[0].type = "GLOBAL"
+    _set_view3d_header_text(ctx, None)
     if restore_tool:
         _set_view3d_tool_safe(ctx, get_pre_extrude_tool())
 
@@ -1061,6 +1081,10 @@ class MAYA_UX_OT_toggle_extrude_space(bpy.types.Operator):
             slots = getattr(scene, "transform_orientation_slots", None)
             if slots and len(slots) > 0:
                 slots[0].type = "NORMAL" if nxt == "LOCAL" else "GLOBAL"
+            _set_view3d_header_text(
+                context,
+                f"Maya Extrude [{nxt.title()}]: Blue Arrow = Normal Push | Center Cube = Uniform Scale | G = Repeat Extrude | Q/W/E/R = Exit",
+            )
         self.report({"INFO"}, f"Extrude Space: {nxt.title()}")
         return {"FINISHED"}
 
@@ -1106,11 +1130,579 @@ class MAYA_UX_OT_extrude_along_curve(bpy.types.Operator):
         )
 
 
+def snapshot_extrude_drag(
+    bm: bmesh.types.BMesh,
+    obj: bpy.types.Object,
+    comp_mode: str,
+    space: str,
+    keep_faces_together: bool,
+) -> list[dict]:
+    """Snapshot selected component groups for drift-free Maya Extrude manipulator dragging."""
+    groups: list[dict] = []
+    if comp_mode == "FACE":
+        sel_faces = [f for f in bm.faces if f.select and not f.hide]
+        raw_groups = _connected_face_islands(sel_faces) if keep_faces_together else [[f] for f in sel_faces]
+        for grp in raw_groups:
+            cap_set = set(grp)
+            cap_verts = list({v for f in grp for v in f.verts})
+            even_norms = _even_vertex_normals(cap_verts, cap_set)
+            miters = _inward_face_miters(cap_verts, cap_set)
+            hint_x = None
+            for e in grp[0].edges:
+                d = e.verts[1].co - e.verts[0].co
+                if d.length > 1e-8:
+                    hint_x = d.normalized()
+                    break
+            pivot, basis = _compute_group_frame(obj, cap_verts, even_norms, hint_x, space)
+            if space == "LOCAL" and sum((even_norms[v] for v in cap_verts), Vector((0, 0, 0))).length <= 1e-6:
+                f0 = grp[0]
+                basis = _orthonormal_basis_from_z(_vec_norm(f0.normal, Vector((0, 0, 1))), hint_x=hint_x)
+            groups.append({
+                "verts": cap_verts,
+                "base_cos": {v: v.co.copy() for v in cap_verts},
+                "even_norms": even_norms,
+                "miters": miters,
+                "pivot": pivot,
+                "basis": basis,
+                "basis_inv": basis.inverted_safe(),
+            })
+    elif comp_mode == "EDGE":
+        sel_edges = [e for e in bm.edges if e.select and not e.hide]
+        raw_groups = [sel_edges] if keep_faces_together else [[e] for e in sel_edges]
+        for grp in raw_groups:
+            cap_verts = list({v for e in grp for v in e.verts})
+            v_norms = {
+                v: _vec_norm(sum((f.normal for f in v.link_faces if f.normal.length > 1e-8), Vector((0, 0, 0))), _vec_norm(v.normal, Vector((0, 0, 1))))
+                for v in cap_verts
+            }
+            miters = _inward_edge_miters(grp, v_norms)
+            hint_x = None
+            for e in grp:
+                d = e.verts[1].co - e.verts[0].co
+                if d.length > 1e-8:
+                    hint_x = d.normalized()
+                    break
+            pivot, basis = _compute_group_frame(obj, cap_verts, v_norms, hint_x, space)
+            groups.append({
+                "verts": cap_verts,
+                "base_cos": {v: v.co.copy() for v in cap_verts},
+                "even_norms": v_norms,
+                "miters": miters,
+                "pivot": pivot,
+                "basis": basis,
+                "basis_inv": basis.inverted_safe(),
+            })
+    else:
+        sel_verts = [v for v in bm.verts if v.select and not v.hide]
+        for v in sel_verts:
+            vn = _vec_norm(v.normal, Vector((0.0, 0.0, 1.0)))
+            pivot, basis = _compute_group_frame(obj, [v], {v: vn}, None, space)
+            groups.append({
+                "verts": [v],
+                "base_cos": {v: v.co.copy()},
+                "even_norms": {v: vn},
+                "miters": {v: Vector((0.0, 0.0, 0.0))},
+                "pivot": pivot,
+                "basis": basis,
+                "basis_inv": basis.inverted_safe(),
+            })
+    return groups
+
+
+def apply_extrude_drag_delta(
+    bm: bmesh.types.BMesh,
+    obj: bpy.types.Object,
+    comp_mode: str,
+    space: str,
+    keep_faces_together: bool,
+    drag_mode: str,
+    amount: float,
+    snapshot: list[dict] | None = None,
+) -> list[dict]:
+    """Apply live interactive Maya Extrude handle deformation across islands/faces/edges."""
+    groups = snapshot if snapshot is not None else snapshot_extrude_drag(bm, obj, comp_mode, space, keep_faces_together)
+    for g in groups:
+        pivot = g["pivot"]
+        basis = g["basis"]
+        basis_inv = g["basis_inv"]
+        base_cos = g["base_cos"]
+        even_norms = g["even_norms"]
+        miters = g["miters"]
+
+        for v in g["verts"]:
+            if not v.is_valid:
+                continue
+            bco = base_cos[v]
+            if drag_mode in {"AUTO_Z", "THICKNESS"}:
+                if drag_mode == "THICKNESS" or space == "LOCAL":
+                    v.co = bco + even_norms[v] * amount
+                else:
+                    v.co = bco + basis @ Vector((0.0, 0.0, amount))
+            elif drag_mode == "MOVE_X":
+                v.co = bco + basis @ Vector((amount, 0.0, 0.0))
+            elif drag_mode == "MOVE_Y":
+                v.co = bco + basis @ Vector((0.0, amount, 0.0))
+            elif drag_mode == "OFFSET":
+                v.co = bco + miters[v] * amount
+            else:
+                rel = basis_inv @ (bco - pivot)
+                if drag_mode == "UNIFORM_SCALE":
+                    s = max(0.01, 1.0 + amount)
+                    rel = rel * s
+                elif drag_mode == "SCALE_X":
+                    rel.x *= max(0.01, 1.0 + amount)
+                elif drag_mode == "SCALE_Y":
+                    rel.y *= max(0.01, 1.0 + amount)
+                elif drag_mode == "SCALE_Z":
+                    rel.z *= max(0.01, 1.0 + amount)
+                elif drag_mode == "TWIST":
+                    rel = Euler((0.0, 0.0, amount), "XYZ").to_matrix() @ rel
+                v.co = pivot + basis @ rel
+
+    bm.normal_update()
+    return groups
+
+
+def _compute_extrude_manipulator_matrix(context) -> tuple[Vector | None, Matrix]:
+    """Compute world-space (pivot, 4x4 rotation) for the Maya Extrude 3D Show Manipulator."""
+    obj = getattr(context, "edit_object", None) or getattr(context, "active_object", None)
+    if obj is None or obj.type != "MESH" or obj.data is None:
+        return None, Matrix.Identity(4)
+
+    bm = bmesh.from_edit_mesh(obj.data)
+    comp_mode = detect_extrude_component(context, bm)
+    if not comp_mode:
+        return None, Matrix.Identity(4)
+
+    space_mode = getattr(context.scene, "maya_ux_extrude_space", "LOCAL")
+    mw = obj.matrix_world
+    mw3 = mw.to_3x3()
+
+    if comp_mode == "FACE":
+        sel = [f for f in bm.faces if f.select and not f.hide]
+        act = bm.select_history.active
+        ref_f = act if isinstance(act, bmesh.types.BMFace) and act.is_valid and act.select else sel[-1]
+        verts = list({v for f in sel for v in f.verts})
+        pivot = mw @ (sum((v.co for v in verts), Vector((0, 0, 0))) / max(1, len(verts)))
+        if space_mode == "WORLD":
+            return pivot, Matrix.Identity(4)
+        avg_n = sum((f.normal for f in sel), Vector((0, 0, 0)))
+        local_z = avg_n if avg_n.length > 1e-4 else ref_f.normal
+        local_x = None
+        for e in ref_f.edges:
+            d = e.verts[1].co - e.verts[0].co
+            if d.length > 1e-6:
+                local_x = d.normalized()
+                break
+        world_z = _vec_norm(mw3 @ local_z, Vector((0, 0, 1)))
+        world_x = (mw3 @ local_x).normalized() if local_x is not None else None
+        return pivot, _orthonormal_basis_from_z(world_z, hint_x=world_x).to_4x4()
+
+    if comp_mode == "EDGE":
+        sel = [e for e in bm.edges if e.select and not e.hide]
+        verts = list({v for e in sel for v in e.verts})
+        pivot = mw @ (sum((v.co for v in verts), Vector((0, 0, 0))) / max(1, len(verts)))
+        if space_mode == "WORLD":
+            return pivot, Matrix.Identity(4)
+        avg_n = sum((f.normal for e in sel for f in e.link_faces if f.normal.length > 1e-8), Vector((0, 0, 0)))
+        if avg_n.length <= 1e-6:
+            avg_n = sum((v.normal for v in verts), Vector((0, 0, 1)))
+        d = sel[-1].verts[1].co - sel[-1].verts[0].co
+        world_z = _vec_norm(mw3 @ avg_n, Vector((0, 0, 1)))
+        world_x = (mw3 @ d).normalized() if d.length > 1e-6 else None
+        return pivot, _orthonormal_basis_from_z(world_z, hint_x=world_x).to_4x4()
+
+    sel = [v for v in bm.verts if v.select and not v.hide]
+    pivot = mw @ (sum((v.co for v in sel), Vector((0, 0, 0))) / max(1, len(sel)))
+    if space_mode == "WORLD":
+        return pivot, Matrix.Identity(4)
+    avg_n = sum((v.normal for v in sel), Vector((0, 0, 1)))
+    world_z = _vec_norm(mw3 @ avg_n, Vector((0, 0, 1)))
+    return pivot, _orthonormal_basis_from_z(world_z).to_4x4()
+
+
+class MAYA_UX_OT_extrude_drag_handle(bpy.types.Operator):
+    """Interactive drag handler for Maya Extrude Show Manipulator (Normal Push / Uniform Scale / Twist)."""
+
+    bl_idname = "maya_ux.extrude_drag_handle"
+    bl_label = "Maya Extrude Drag Handle"
+    bl_options = {"REGISTER", "UNDO"}
+
+    mode: EnumProperty(
+        name="Handle Mode",
+        items=[
+            ("AUTO_Z", "Normal / Local Z", "Push each face/island along its own normal (or World Z)"),
+            ("THICKNESS", "Thickness", "Uniform normal thickness push"),
+            ("MOVE_X", "Move X", "Translate along X"),
+            ("MOVE_Y", "Move Y", "Translate along Y"),
+            ("UNIFORM_SCALE", "Uniform Scale", "Uniform per-island scale"),
+            ("SCALE_X", "Scale X", "Scale along X"),
+            ("SCALE_Y", "Scale Y", "Scale along Y"),
+            ("SCALE_Z", "Scale Z", "Scale along Z"),
+            ("OFFSET", "Offset", "Inward/outward boundary inset"),
+            ("TWIST", "Twist", "Twist around Z axis"),
+        ],
+        default="AUTO_Z",
+    )
+
+    _obj = None
+    _comp_mode: str = "FACE"
+    _space: str = "LOCAL"
+    _keep: bool = True
+    _snapshot = None
+    _start_mouse: tuple[float, float] = (0.0, 0.0)
+    _screen_dir: Vector | None = None
+    _world_per_px: float = 0.01
+
+    def invoke(self, context, event):
+        if getattr(context, "mode", "") != "EDIT_MESH":
+            return {"CANCELLED"}
+        obj = getattr(context, "edit_object", None) or getattr(context, "active_object", None)
+        if obj is None or obj.type != "MESH" or obj.data is None:
+            return {"CANCELLED"}
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        comp_mode = detect_extrude_component(context, bm)
+        if not comp_mode:
+            return {"CANCELLED"}
+
+        self._obj = obj
+        self._comp_mode = comp_mode
+        self._space = getattr(context.scene, "maya_ux_extrude_space", "LOCAL")
+        self._keep = bool(getattr(context.scene, "maya_ux_keep_faces_together", True))
+        self._snapshot = snapshot_extrude_drag(bm, obj, comp_mode, self._space, self._keep)
+        self._start_mouse = (float(event.mouse_region_x), float(event.mouse_region_y))
+
+        region = getattr(context, "region", None)
+        rv3d = getattr(context, "region_data", None)
+        pivot, rot4 = _compute_extrude_manipulator_matrix(context)
+        axis_map = {
+            "AUTO_Z": Vector((0, 0, 1)),
+            "THICKNESS": Vector((0, 0, 1)),
+            "MOVE_X": Vector((1, 0, 0)),
+            "MOVE_Y": Vector((0, 1, 0)),
+            "SCALE_X": Vector((1, 0, 0)),
+            "SCALE_Y": Vector((0, 1, 0)),
+            "SCALE_Z": Vector((0, 0, 1)),
+        }
+        self._screen_dir = None
+        self._world_per_px = 0.01
+
+        if region is not None and rv3d is not None and pivot is not None:
+            p0 = view3d_utils.location_3d_to_region_2d(region, rv3d, pivot)
+            view_dir = (rv3d.view_rotation @ Vector((0, 0, -1))).normalized()
+            if p0 is not None:
+                # Estimate pixels per world unit around pivot
+                right_w = (rv3d.view_rotation @ Vector((1, 0, 0))).normalized()
+                p_right = view3d_utils.location_3d_to_region_2d(region, rv3d, pivot + right_w)
+                if p_right is not None and (p_right - p0).length > 1e-4:
+                    self._world_per_px = 1.0 / (p_right - p0).length
+                if self.mode in axis_map:
+                    w_axis = (rot4.to_3x3() @ axis_map[self.mode]).normalized()
+                    p1 = view3d_utils.location_3d_to_region_2d(region, rv3d, pivot + w_axis)
+                    if p1 is not None and (p1 - p0).length > 2.0:
+                        self._screen_dir = (p1 - p0).normalized()
+            elif view_dir.length > 0:
+                self._world_per_px = max(0.002, (rv3d.view_distance * 0.002))
+
+        context.window_manager.modal_handler_add(self)
+        return {"RUNNING_MODAL"}
+
+    def modal(self, context, event):
+        if event.type == "MOUSEMOVE":
+            dx = float(event.mouse_region_x) - self._start_mouse[0]
+            dy = float(event.mouse_region_y) - self._start_mouse[1]
+            if self._screen_dir is not None and self.mode in {"AUTO_Z", "THICKNESS", "MOVE_X", "MOVE_Y", "SCALE_X", "SCALE_Y", "SCALE_Z"}:
+                px_delta = Vector((dx, dy)).dot(self._screen_dir)
+            else:
+                px_delta = dx + dy * 0.5
+
+            if event.shift:
+                px_delta *= 0.2
+
+            if self.mode in {"UNIFORM_SCALE", "SCALE_X", "SCALE_Y", "SCALE_Z"}:
+                amount = px_delta * 0.006
+            elif self.mode == "TWIST":
+                amount = px_delta * 0.015
+            else:
+                amount = px_delta * self._world_per_px
+
+            bm = bmesh.from_edit_mesh(self._obj.data)
+            apply_extrude_drag_delta(
+                bm,
+                self._obj,
+                self._comp_mode,
+                self._space,
+                self._keep,
+                self.mode,
+                amount,
+                snapshot=self._snapshot,
+            )
+            bmesh.update_edit_mesh(self._obj.data, loop_triangles=True, destructive=False)
+            if context.area is not None:
+                context.area.tag_redraw()
+            return {"RUNNING_MODAL"}
+
+        if (event.type == "LEFTMOUSE" and event.value == "RELEASE") or (
+            event.type in {"RET", "NUMPAD_ENTER"} and event.value == "PRESS"
+        ):
+            return {"FINISHED"}
+
+        if event.type in {"RIGHTMOUSE", "ESC"} and event.value == "PRESS":
+            bm = bmesh.from_edit_mesh(self._obj.data)
+            apply_extrude_drag_delta(
+                bm,
+                self._obj,
+                self._comp_mode,
+                self._space,
+                self._keep,
+                self.mode,
+                0.0,
+                snapshot=self._snapshot,
+            )
+            bmesh.update_edit_mesh(self._obj.data, loop_triangles=True, destructive=False)
+            if context.area is not None:
+                context.area.tag_redraw()
+            return {"CANCELLED"}
+
+        return {"RUNNING_MODAL"}
+
+
+class MAYA_UX_OT_repeat_last(bpy.types.Operator):
+    """Maya Repeat Last (G): chains a new Extrude during active Extrude session, else screen.repeat_last."""
+
+    bl_idname = "maya_ux.repeat_last"
+    bl_label = "Maya Repeat Last"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        if getattr(context, "mode", "") == "EDIT_MESH" and is_extrude_session_active():
+            if bpy.app.background:
+                return bpy.ops.maya_ux.maya_extrude(
+                    space=getattr(context.scene, "maya_ux_extrude_space", "LOCAL"),
+                    keep_faces_together=bool(getattr(context.scene, "maya_ux_keep_faces_together", True)),
+                )
+            return bpy.ops.maya_ux.maya_extrude("INVOKE_DEFAULT")
+        try:
+            return bpy.ops.screen.repeat_last()
+        except (TypeError, RuntimeError):
+            return {"CANCELLED"}
+
+
+class MAYA_UX_OT_cleanup_extrude(bpy.types.Operator):
+    """Merge zero-thickness accidental double extrusions and recalculate face normals."""
+
+    bl_idname = "maya_ux.cleanup_extrude"
+    bl_label = "Fix Double Extrude"
+    bl_options = {"REGISTER", "UNDO"}
+
+    merge_distance: FloatProperty(name="Merge Distance", default=1e-4, min=1e-6, max=0.1)
+
+    def execute(self, context):
+        if getattr(context, "mode", "") != "EDIT_MESH":
+            self.report({"WARNING"}, "Switch to Edit Mode to clean up double extrusions")
+            return {"CANCELLED"}
+        obj = getattr(context, "edit_object", None) or getattr(context, "active_object", None)
+        if obj is None or obj.type != "MESH" or obj.data is None:
+            return {"CANCELLED"}
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        before_verts = len(bm.verts)
+        bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=self.merge_distance)
+        bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
+        after_verts = len(bm.verts)
+        bm.select_flush_mode()
+        bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=True)
+        removed = before_verts - after_verts
+        self.report({"INFO"}, f"Cleanup Extrude: merged {removed} duplicate vertex(es)")
+        return {"FINISHED"}
+
+
+class VIEW3D_GT_maya_extrude_arrow(bpy.types.Gizmo):
+    """Arrow gizmo handle for Maya Extrude Show Manipulator."""
+
+    bl_idname = "VIEW3D_GT_maya_extrude_arrow"
+
+    def draw(self, context):
+        self.draw_preset_arrow(self.matrix_world, axis="POS_Z")
+
+    def draw_select(self, context, select_id):
+        self.draw_preset_arrow(self.matrix_world, axis="POS_Z", select_id=select_id)
+
+
+class VIEW3D_GT_maya_extrude_box(bpy.types.Gizmo):
+    """Cube handle for Maya Extrude Uniform Scale & Axis Scale."""
+
+    bl_idname = "VIEW3D_GT_maya_extrude_box"
+
+    def draw(self, context):
+        self.draw_preset_box(self.matrix_world @ Matrix.Scale(0.11, 4))
+
+    def draw_select(self, context, select_id):
+        self.draw_preset_box(self.matrix_world @ Matrix.Scale(0.11, 4), select_id=select_id)
+
+
+class VIEW3D_GT_maya_extrude_ring(bpy.types.Gizmo):
+    """Ring handle for Maya Extrude Twist / Local-World toggle."""
+
+    bl_idname = "VIEW3D_GT_maya_extrude_ring"
+
+    def draw(self, context):
+        self.draw_preset_circle(self.matrix_world, axis="POS_Z")
+
+    def draw_select(self, context, select_id):
+        self.draw_preset_circle(self.matrix_world, axis="POS_Z", select_id=select_id)
+
+
+class VIEW3D_GGT_maya_extrude(bpy.types.GizmoGroup):
+    """Native 3D Maya Extrude Show Manipulator active exclusively during an Extrude session."""
+
+    bl_idname = "VIEW3D_GGT_maya_extrude"
+    bl_label = "Maya Extrude Show Manipulator"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "WINDOW"
+    bl_options = {"3D", "PERSISTENT"}
+
+    @classmethod
+    def poll(cls, context):
+        from . import ops_viewport
+
+        if getattr(context, "mode", "") != "EDIT_MESH" or not is_extrude_session_active():
+            return False
+        if not bool(getattr(get_prefs(context), "extrude_activate_gizmo", True)):
+            return False
+        space = ops_viewport._get_view3d_space(context)
+        return space is not None and space.type == "VIEW_3D" and bool(space.show_gizmo)
+
+    def _new_arrow(self, color, drag_mode: str, offset_rot: Matrix):
+        gz = self.gizmos.new(VIEW3D_GT_maya_extrude_arrow.bl_idname)
+        gz.color = color
+        gz.alpha = 0.90
+        gz.color_highlight = (1.0, 0.95, 0.15)
+        gz.alpha_highlight = 1.0
+        gz.use_draw_scale = True
+        gz.use_draw_offset_scale = True
+        gz.use_draw_modal = True
+        gz.scale_basis = 1.0
+        gz.line_width = 2.5
+        gz.matrix_offset = offset_rot
+        op = gz.target_set_operator("maya_ux.extrude_drag_handle")
+        op.mode = drag_mode
+        return gz
+
+    def _new_box(self, color, drag_mode: str, offset_pos: tuple[float, float, float], scale_mult: float = 1.0, bias: float = 0.0):
+        gz = self.gizmos.new(VIEW3D_GT_maya_extrude_box.bl_idname)
+        gz.color = color
+        gz.alpha = 0.90
+        gz.color_highlight = (1.0, 0.95, 0.15)
+        gz.alpha_highlight = 1.0
+        gz.use_draw_scale = True
+        gz.use_draw_offset_scale = True
+        gz.use_draw_modal = True
+        gz.scale_basis = 1.0
+        gz.select_bias = bias
+        gz.matrix_offset = Matrix.Translation(offset_pos) @ Matrix.Scale(scale_mult, 4)
+        op = gz.target_set_operator("maya_ux.extrude_drag_handle")
+        op.mode = drag_mode
+        return gz
+
+    def setup(self, context):
+        self.gz_move_z = self._new_arrow((0.20, 0.58, 1.0), "AUTO_Z", Matrix.Identity(4))
+        self.gz_move_x = self._new_arrow((0.95, 0.25, 0.25), "MOVE_X", Matrix.Rotation(math.radians(90.0), 4, "Y"))
+        self.gz_move_y = self._new_arrow((0.25, 0.90, 0.35), "MOVE_Y", Matrix.Rotation(math.radians(-90.0), 4, "X"))
+
+        self.gz_scale_center = self._new_box((0.35, 0.88, 0.98), "UNIFORM_SCALE", (0.0, 0.0, 0.0), scale_mult=1.0, bias=12.0)
+        self.gz_scale_x = self._new_box((0.95, 0.25, 0.25), "SCALE_X", (0.58, 0.0, 0.0), scale_mult=0.68)
+        self.gz_scale_y = self._new_box((0.25, 0.90, 0.35), "SCALE_Y", (0.0, 0.58, 0.0), scale_mult=0.68)
+        self.gz_scale_z = self._new_box((0.20, 0.58, 1.0), "SCALE_Z", (0.0, 0.0, 0.58), scale_mult=0.68)
+
+        gz_twist = self.gizmos.new(VIEW3D_GT_maya_extrude_ring.bl_idname)
+        gz_twist.color = (0.85, 0.88, 0.92)
+        gz_twist.alpha = 0.45
+        gz_twist.color_highlight = (1.0, 0.95, 0.15)
+        gz_twist.alpha_highlight = 1.0
+        gz_twist.use_draw_scale = True
+        gz_twist.use_draw_offset_scale = True
+        gz_twist.scale_basis = 1.0
+        gz_twist.line_width = 1.5
+        gz_twist.matrix_offset = Matrix.Scale(0.75, 4)
+        gz_twist.target_set_operator("maya_ux.extrude_drag_handle").mode = "TWIST"
+        self.gz_twist = gz_twist
+
+        gz_sw = self.gizmos.new(VIEW3D_GT_maya_extrude_ring.bl_idname)
+        gz_sw.color = (0.35, 0.88, 0.98)
+        gz_sw.alpha = 0.95
+        gz_sw.color_highlight = (1.0, 0.95, 0.15)
+        gz_sw.alpha_highlight = 1.0
+        gz_sw.use_draw_scale = True
+        gz_sw.use_draw_offset_scale = True
+        gz_sw.scale_basis = 1.0
+        gz_sw.line_width = 3.0
+        gz_sw.matrix_offset = Matrix.Translation((0.46, 0.46, 0.46)) @ Matrix.Scale(0.11, 4)
+        gz_sw.target_set_operator("maya_ux.toggle_extrude_space")
+        self.gz_space_btn = gz_sw
+
+        self._update_gizmos(context)
+
+    def _update_gizmos(self, context):
+        pivot, rot4 = _compute_extrude_manipulator_matrix(context)
+        all_gz = (
+            self.gz_move_z,
+            self.gz_move_x,
+            self.gz_move_y,
+            self.gz_scale_center,
+            self.gz_scale_x,
+            self.gz_scale_y,
+            self.gz_scale_z,
+            self.gz_twist,
+            self.gz_space_btn,
+        )
+        if pivot is None:
+            for gz in all_gz:
+                gz.hide = True
+                gz.hide_select = True
+            return
+        mat = Matrix.Translation(pivot) @ rot4
+        is_local = getattr(context.scene, "maya_ux_extrude_space", "LOCAL") == "LOCAL"
+        self.gz_space_btn.color = (0.35, 0.88, 0.98) if is_local else (1.0, 0.58, 0.18)
+        for gz in all_gz:
+            gz.hide = False
+            gz.hide_select = False
+            gz.matrix_basis = mat
+
+    def refresh(self, context):
+        self._update_gizmos(context)
+
+    def draw_prepare(self, context):
+        self._update_gizmos(context)
+
+
+def draw_maya_extrude_mesh_menu(self, context):
+    """Append Maya Extrude actions directly to Edit Mode top Mesh menu."""
+    layout = self.layout
+    layout.separator()
+    layout.operator("maya_ux.maya_extrude", text="Maya Extrude (Face / Edge / Vert)", icon="FACESEL")
+    keep_on = bool(getattr(context.scene, "maya_ux_keep_faces_together", True))
+    layout.operator(
+        "maya_ux.toggle_keep_faces_together",
+        text=f"Keep Faces Together ({'ON' if keep_on else 'OFF'})",
+    )
+    layout.operator("maya_ux.extrude_along_curve", text="Maya Extrude Along Curve", icon="CURVE_BEZCURVE")
+    layout.operator("maya_ux.cleanup_extrude", text="Fix Double Extrude", icon="AUTOMERGE_ON")
+
+
 CLASSES = (
     MAYA_UX_OT_maya_extrude,
+    MAYA_UX_OT_extrude_drag_handle,
+    MAYA_UX_OT_repeat_last,
+    MAYA_UX_OT_cleanup_extrude,
     MAYA_UX_OT_toggle_keep_faces_together,
     MAYA_UX_OT_toggle_extrude_space,
     MAYA_UX_OT_extrude_along_curve,
+    VIEW3D_GT_maya_extrude_arrow,
+    VIEW3D_GT_maya_extrude_box,
+    VIEW3D_GT_maya_extrude_ring,
+    VIEW3D_GGT_maya_extrude,
 )
 
 
@@ -1149,9 +1741,14 @@ def register():
         args=(),
         notify=_on_extrude_context_change,
     )
+    bpy.types.VIEW3D_MT_edit_mesh.append(draw_maya_extrude_mesh_menu)
 
 
 def unregister():
+    try:
+        bpy.types.VIEW3D_MT_edit_mesh.remove(draw_maya_extrude_mesh_menu)
+    except ValueError:
+        pass
     bpy.msgbus.clear_by_owner(_EXTRUDE_MSGBUS_OWNER)
     end_extrude_session(bpy.context, restore_tool=True)
     for cls in reversed(CLASSES):

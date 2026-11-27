@@ -1454,6 +1454,126 @@ def collect_edge_loop_indices(bm: bmesh.types.BMesh, seed_edge: bmesh.types.BMEd
     return loop
 
 
+def collect_face_loop_indices(
+    bm: bmesh.types.BMesh,
+    face_a: bmesh.types.BMFace,
+    face_b: bmesh.types.BMFace,
+) -> set[int]:
+    """Walk opposite quad edges across two adjacent faces to collect their full Face Loop."""
+    shared = next((e for e in face_a.edges if e in face_b.edges and not e.hide), None)
+    if shared is None:
+        return {face_a.index, face_b.index}
+
+    loop = {face_a.index, face_b.index}
+
+    def _walk(start_f: bmesh.types.BMFace, entry_e: bmesh.types.BMEdge):
+        cur_f = start_f
+        cur_e = entry_e
+        while True:
+            if cur_f.hide or len(cur_f.edges) != 4:
+                break
+            e_verts = set(cur_e.verts)
+            opp_e = next((e for e in cur_f.edges if e != cur_e and not (set(e.verts) & e_verts)), None)
+            if opp_e is None or opp_e.hide:
+                break
+            nbrs = [af for af in opp_e.link_faces if af != cur_f and not af.hide]
+            if len(nbrs) != 1:
+                break
+            nxt_f = nbrs[0]
+            if nxt_f.index in loop:
+                break
+            loop.add(nxt_f.index)
+            cur_f = nxt_f
+            cur_e = opp_e
+
+    _walk(face_b, shared)
+    _walk(face_a, shared)
+    return loop
+
+
+def _collect_linked_face_indices(seed_face: bmesh.types.BMFace) -> set[int]:
+    """Flood-fill connected visible faces for Maya Double-Click Face Shell selection."""
+    visited = {seed_face.index}
+    stack = [seed_face]
+    while stack:
+        cur = stack.pop()
+        for e in cur.edges:
+            if e.hide:
+                continue
+            for af in e.link_faces:
+                if not af.hide and af.index not in visited:
+                    visited.add(af.index)
+                    stack.append(af)
+    return visited
+
+
+def _collect_linked_vert_indices(seed_vert: bmesh.types.BMVert) -> set[int]:
+    """Flood-fill connected visible vertices for Maya Double-Click Vertex Shell selection."""
+    visited = {seed_vert.index}
+    stack = [seed_vert]
+    while stack:
+        cur = stack.pop()
+        for e in cur.link_edges:
+            if e.hide:
+                continue
+            ov = e.other_vert(cur)
+            if not ov.hide and ov.index not in visited:
+                visited.add(ov.index)
+                stack.append(ov)
+    return visited
+
+
+def _pick_face_hits_double_click(context, objs, mouse_xy: tuple[float, float], hit_radius_px: float):
+    """Pick (obj, face_index) hit(s) under mouse_xy for Face Loop / Shell Double-Click."""
+    region = getattr(context, "region", None)
+    rv3d = getattr(context, "region_data", None)
+    if region is None or rv3d is None:
+        return []
+
+    if is_ortho_component_view(context):
+        stacked = _pick_ortho_face_centers(context, mouse_xy, hit_radius_px=max(hit_radius_px, 24.0))
+        if stacked:
+            return stacked
+
+    ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, mouse_xy)
+    ray_dir = view3d_utils.region_2d_to_vector_3d(region, rv3d, mouse_xy)
+    depsgraph = context.evaluated_depsgraph_get()
+    hit, _loc, _norm, face_idx, hit_obj, _mat = context.scene.ray_cast(depsgraph, ray_origin, ray_dir)
+    if hit and hit_obj in objs and face_idx >= 0:
+        return [(hit_obj, int(face_idx))]
+
+    fb = pick_face_by_center(context, mouse_xy, hit_radius_px=max(hit_radius_px, 20.0))
+    return [fb] if fb is not None else []
+
+
+def _pick_vert_hits_double_click(context, objs, mouse_xy: tuple[float, float], hit_radius_px: float):
+    """Pick (obj, vert_index) hit(s) under mouse_xy for Vertex Loop / Shell Double-Click."""
+    region = getattr(context, "region", None)
+    rv3d = getattr(context, "region_data", None)
+    if region is None or rv3d is None:
+        return []
+    candidates = []
+    for obj in objs:
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.verts.ensure_lookup_table()
+        mw = obj.matrix_world
+        for v in bm.verts:
+            if v.hide:
+                continue
+            wc = mw @ v.co
+            pt = view3d_utils.location_3d_to_region_2d(region, rv3d, wc)
+            if pt is not None:
+                depth = -(rv3d.view_matrix @ wc).z
+                candidates.append(((obj, v.index), float(pt.x), float(pt.y), float(depth)))
+
+    if is_ortho_component_view(context):
+        ui_scale = float(getattr(context.preferences.system, "ui_scale", 1.0))
+        return pick_stacked_indices_2d(candidates, mouse_xy, hit_radius_px=hit_radius_px, stack_tol_px=4.0 * ui_scale)
+    mx, my = mouse_xy
+    in_r = [(item, hypot(px - mx, py - my), depth) for item, px, py, depth in candidates if hypot(px - mx, py - my) <= hit_radius_px]
+    return [min(in_r, key=lambda c: (c[2], c[1]))[0]] if in_r else []
+
+
 def _pick_nearest_edge_candidates_2d(context, objs, mouse_xy: tuple[float, float]):
     """Project all visible mesh edges to 2D region coords for double-click loop picking."""
     region = getattr(context, "region", None)
@@ -1497,7 +1617,9 @@ class MAYA_UX_OT_edge_loop_double_click(bpy.types.Operator):
     def invoke(self, context, event):
         if getattr(context, "mode", "") != "EDIT_MESH":
             return {"PASS_THROUGH"}
-        if not bool(context.tool_settings.mesh_select_mode[1]):
+
+        v_mode, e_mode, f_mode = tuple(bool(x) for x in context.tool_settings.mesh_select_mode)
+        if not (v_mode or e_mode or f_mode):
             return {"PASS_THROUGH"}
 
         region = getattr(context, "region", None)
@@ -1513,6 +1635,111 @@ class MAYA_UX_OT_edge_loop_double_click(bpy.types.Operator):
         ui_scale = float(getattr(context.preferences.system, "ui_scale", 1.0))
         radius = 12.0 * ui_scale
         mouse_xy = (float(event.mouse_region_x), float(event.mouse_region_y))
+
+        # Face Mode: Shift+Double-Click adjacent face -> Face Loop; Double-Click -> Face Shell
+        if f_mode and not e_mode:
+            hits = _pick_face_hits_double_click(context, objs, mouse_xy, radius)
+            if not hits:
+                return {"FINISHED"}
+            bm_map = {obj: bmesh.from_edit_mesh(obj.data) for obj in objs}
+            for bm in bm_map.values():
+                bm.faces.ensure_lookup_table()
+            for obj, face_idx in hits:
+                bm = bm_map.get(obj)
+                if bm is None or not (0 <= face_idx < len(bm.faces)):
+                    continue
+                clicked_f = bm.faces[face_idx]
+                seed_f = None
+                if self.toggle:
+                    act = bm.select_history.active
+                    if isinstance(act, bmesh.types.BMFace) and act.is_valid and act != clicked_f and act.select:
+                        if any(e in clicked_f.edges for e in act.edges):
+                            seed_f = act
+                    if seed_f is None:
+                        seed_f = next(
+                            (af for e in clicked_f.edges for af in e.link_faces if af != clicked_f and not af.hide and af.select),
+                            None,
+                        )
+                target_faces = (
+                    collect_face_loop_indices(bm, seed_f, clicked_f)
+                    if seed_f is not None
+                    else _collect_linked_face_indices(clicked_f)
+                )
+                if self.deselect:
+                    for idx in target_faces:
+                        bm.faces[idx].select_set(False)
+                elif not self.toggle:
+                    for grp in (bm.verts, bm.edges, bm.faces):
+                        for el in grp:
+                            el.select = False
+                    for idx in target_faces:
+                        bm.faces[idx].select_set(True)
+                else:
+                    others_all_sel = all(bm.faces[idx].select for idx in target_faces if idx != face_idx)
+                    state = False if (not clicked_f.select and others_all_sel and len(target_faces) > 1) else True
+                    for idx in target_faces:
+                        bm.faces[idx].select_set(state)
+
+            for obj, bm in bm_map.items():
+                bm.select_flush_mode()
+                bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+            from . import ops_extrude
+
+            if ops_extrude.is_extrude_session_active():
+                ops_extrude.end_extrude_session(context, restore_tool=True)
+            return {"FINISHED"}
+
+        # Vertex Mode: Shift+Double-Click adjacent vertex -> Vertex Loop; Double-Click -> Vertex Shell
+        if v_mode and not e_mode and not f_mode:
+            hits = _pick_vert_hits_double_click(context, objs, mouse_xy, radius)
+            if not hits:
+                return {"FINISHED"}
+            bm_map = {obj: bmesh.from_edit_mesh(obj.data) for obj in objs}
+            for bm in bm_map.values():
+                bm.verts.ensure_lookup_table()
+                bm.edges.ensure_lookup_table()
+            for obj, v_idx in hits:
+                bm = bm_map.get(obj)
+                if bm is None or not (0 <= v_idx < len(bm.verts)):
+                    continue
+                clicked_v = bm.verts[v_idx]
+                adj_e = None
+                if self.toggle:
+                    adj_e = next(
+                        (e for e in clicked_v.link_edges if not e.hide and e.other_vert(clicked_v).select),
+                        None,
+                    )
+                if adj_e is not None:
+                    loop_es = collect_edge_loop_indices(bm, adj_e)
+                    target_verts = {v.index for ei in loop_es for v in bm.edges[ei].verts}
+                else:
+                    target_verts = _collect_linked_vert_indices(clicked_v)
+
+                if self.deselect:
+                    for idx in target_verts:
+                        bm.verts[idx].select_set(False)
+                elif not self.toggle:
+                    for grp in (bm.verts, bm.edges, bm.faces):
+                        for el in grp:
+                            el.select = False
+                    for idx in target_verts:
+                        bm.verts[idx].select_set(True)
+                else:
+                    others_all_sel = all(bm.verts[idx].select for idx in target_verts if idx != v_idx)
+                    state = False if (not clicked_v.select and others_all_sel and len(target_verts) > 1) else True
+                    for idx in target_verts:
+                        bm.verts[idx].select_set(state)
+
+            for obj, bm in bm_map.items():
+                bm.select_flush_mode()
+                bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+            from . import ops_extrude
+
+            if ops_extrude.is_extrude_session_active():
+                ops_extrude.end_extrude_session(context, restore_tool=True)
+            return {"FINISHED"}
+
+        # Edge / Multi-Component Mode: Edge Loop selection
         candidates = _pick_nearest_edge_candidates_2d(context, objs, mouse_xy)
 
         if is_ortho_component_view(context):

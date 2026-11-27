@@ -2,6 +2,14 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.8.0] - 2026-11-27
+### Added
+- **Native 3D Maya Extrude Show Manipulator & Video Workflow Parity (`ops_extrude.py`, `ops_selection.py`, `keymap.py`, `ui_channel_box.py`)**:
+  - **Dedicated 3D Extrude Manipulator (`VIEW3D_GGT_maya_extrude`)**: active exclusively during an Extrude session (no overlap with `builtin.transform`), featuring a **Blue Normal Arrow** (`AUTO_Z`) that pushes every selected face/island symmetrically along its own normal even on opposite faces or 4-face rings, **Cyan Center Cube** (`UNIFORM_SCALE`) for uniform per-island scaling/inset, **Red/Green Arrows**, **Axis Scale Cubes**, **Rotation Twist Ring**, and a clickable **`Local ↔ World`** space toggle directly on the manipulator.
+  - **Chained Extrude on `G` (`maya_ux.repeat_last`)**: pressing **`G`** in Edit Mesh while an Extrude session is active immediately chains another Extrude instead of repeating a transform drag.
+  - **Face Loop & Vertex Loop on `Shift + Double-Click`** (`LMB Double-Click` selects Edge Loop or Face/Vertex Shell; `⇧ + Double-Click` on an adjacent face or vertex selects the full **Face Loop** or **Vertex Loop** across Perspective and Ortho views).
+  - **`Mesh > Maya Extrude` Top Menu & `Fix Double Extrude` (`maya_ux.cleanup_extrude`)**: added Maya Extrude menu entries to `VIEW3D_MT_edit_mesh` and a 1-click zero-thickness double-extrude cleanup (`Merge by Distance` + `Recalc Normals`) in `N → Maya`.
+
 ## [2.7.3] - 2026-11-27
 ### Added
 - **Double-Click Edge Loop Selection (`ops_selection.py`, `keymap.py`)**:

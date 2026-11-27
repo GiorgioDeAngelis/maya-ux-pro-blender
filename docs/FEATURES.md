@@ -1,4 +1,4 @@
-# Maya UX Pro — Features & Module Architecture (`v2.7.3`)
+# Maya UX Pro — Features & Module Architecture (`v2.8.0`)
 
 Maya UX Pro is organized into **26 cleanly modular Python files** inside `maya_ux_pro/`. Every module can be toggled or configured in **Preferences → Extensions / Add-ons → Maya UX Pro**.
 

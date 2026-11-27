@@ -782,6 +782,17 @@ def test_selection_pickwalk_soft_and_delete():
     vert_edge = next(e for e in bm_dc.edges if abs(e.verts[0].co.z - e.verts[1].co.z) > 0.1)
     assert len(ops_selection.collect_edge_loop_indices(bm_dc, ring_edge)) == 16
     assert len(ops_selection.collect_edge_loop_indices(bm_dc, vert_edge)) == 2
+
+    # Face Loop collection on 16-segment cylinder & subdivided cube
+    bm_dc.faces.ensure_lookup_table()
+    f0 = next(f for f in bm_dc.faces if f.calc_center_median().z > 0.0)
+    adj_f_loop = next(
+        af
+        for e in f0.edges
+        for af in e.link_faces
+        if af != f0 and af.calc_center_median().z > 0.0
+    )
+    assert len(ops_selection.collect_face_loop_indices(bm_dc, f0, adj_f_loop)) == 16
     bpy.ops.object.mode_set(mode="OBJECT")
 
     # Box & multi-face selection across front + hidden back components on Cube
@@ -1843,6 +1854,69 @@ def test_maya_extrude_pro():
     assert ops_extrude.is_extrude_session_active() is False
     assert bpy.context.scene.transform_orientation_slots[0].type == "GLOBAL"
 
+    # 9. Native 3D Show Manipulator (VIEW3D_GGT_maya_extrude), opposite-face Normal Push, Uniform Scale, G Repeat & Cleanup
+    assert "bl_rna" in ops_extrude.VIEW3D_GT_maya_extrude_arrow.__dict__
+    assert "bl_rna" in ops_extrude.VIEW3D_GT_maya_extrude_box.__dict__
+    assert "bl_rna" in ops_extrude.VIEW3D_GT_maya_extrude_ring.__dict__
+    assert "bl_rna" in ops_extrude.VIEW3D_GGT_maya_extrude.__dict__
+    assert ops_extrude.VIEW3D_GGT_maya_extrude.poll(bpy.context) is False
+
+    # Select 2 opposite faces (+X and -X) on a fresh Cube and push both via AUTO_Z (Normal Push)
+    cube_opp = _reset_scene()
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.context.scene.tool_settings.mesh_select_mode = (False, False, True)
+    bm_opp = bmesh.from_edit_mesh(cube_opp.data)
+    bm_opp.faces.ensure_lookup_table()
+    f_pos_x = max(bm_opp.faces, key=lambda f: f.normal.x)
+    f_neg_x = min(bm_opp.faces, key=lambda f: f.normal.x)
+    for f in bm_opp.faces:
+        f.select = f in (f_pos_x, f_neg_x)
+    bm_opp.select_flush_mode()
+    bmesh.update_edit_mesh(cube_opp.data)
+
+    assert bpy.ops.maya_ux.maya_extrude(space="LOCAL", thickness=0.0) == {"FINISHED"}
+    assert ops_extrude.VIEW3D_GGT_maya_extrude.poll(bpy.context) is True
+    bm_drag = bmesh.from_edit_mesh(cube_opp.data)
+    snap = ops_extrude.snapshot_extrude_drag(bm_drag, cube_opp, "FACE", "LOCAL", True)
+    ops_extrude.apply_extrude_drag_delta(bm_drag, cube_opp, "FACE", "LOCAL", True, "AUTO_Z", 0.5, snapshot=snap)
+    bmesh.update_edit_mesh(cube_opp.data)
+    bm_drag_check = bmesh.from_edit_mesh(cube_opp.data)
+    xs = [f.calc_center_median().x for f in bm_drag_check.faces if f.select]
+    assert len(xs) == 2 and abs(max(xs) - 1.5) < 1e-4 and abs(min(xs) + 1.5) < 1e-4
+
+    # Uniform Scale on 2 opposite faces scales each around its own centroid without drifting X
+    snap_sc = ops_extrude.snapshot_extrude_drag(bm_drag_check, cube_opp, "FACE", "LOCAL", True)
+    ops_extrude.apply_extrude_drag_delta(bm_drag_check, cube_opp, "FACE", "LOCAL", True, "UNIFORM_SCALE", -0.5, snapshot=snap_sc)
+    bmesh.update_edit_mesh(cube_opp.data)
+    bm_sc_check = bmesh.from_edit_mesh(cube_opp.data)
+    xs_sc = [f.calc_center_median().x for f in bm_sc_check.faces if f.select]
+    assert abs(max(xs_sc) - 1.5) < 1e-4 and abs(min(xs_sc) + 1.5) < 1e-4
+    assert all(f.calc_area() < 1.5 for f in bm_sc_check.faces if f.select)
+
+    # G (maya_ux.repeat_last) chains a new Extrude while session is active
+    before_faces = len(bm_sc_check.faces)
+    assert bpy.ops.maya_ux.repeat_last() == {"FINISHED"}
+    assert len(bmesh.from_edit_mesh(cube_opp.data).faces) > before_faces
+
+    # Cleanup accidental zero-thickness double extrude
+    cube_dbl = _reset_scene()
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.context.scene.tool_settings.mesh_select_mode = (False, False, True)
+    bm_d = bmesh.from_edit_mesh(cube_dbl.data)
+    bm_d.faces.ensure_lookup_table()
+    for grp in (bm_d.verts, bm_d.edges, bm_d.faces):
+        for el in grp:
+            el.select = False
+    bm_d.faces[0].select = True
+    bm_d.select_flush_mode()
+    bmesh.update_edit_mesh(cube_dbl.data)
+    assert bpy.ops.maya_ux.maya_extrude(thickness=0.0) == {"FINISHED"}
+    assert len(bmesh.from_edit_mesh(cube_dbl.data).verts) == 12
+    assert bpy.ops.maya_ux.cleanup_extrude() == {"FINISHED"}
+    assert len(bmesh.from_edit_mesh(cube_dbl.data).verts) == 8
+    bpy.ops.object.mode_set(mode="OBJECT")
+    assert ops_extrude.VIEW3D_GGT_maya_extrude.poll(bpy.context) is False
+
     print("[PASS] maya_extrude_pro")
 
 
@@ -1851,6 +1925,8 @@ def test_unregistration():
 
     maya_ux_pro.unregister()
     assert ops_extrude.is_extrude_session_active() is False
+    assert "bl_rna" not in ops_extrude.VIEW3D_GGT_maya_extrude.__dict__
+    assert "bl_rna" not in ops_extrude.VIEW3D_GT_maya_extrude_arrow.__dict__
     assert "bl_rna" not in ops_viewport.VIEW3D_GGT_maya_center_scale.__dict__
     assert "bl_rna" not in ops_viewport.VIEW3D_GT_maya_center_scale_cube.__dict__
     assert ops_selection._SELECTED_VERT_DRAW_HANDLE is None

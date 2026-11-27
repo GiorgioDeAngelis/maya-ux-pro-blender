@@ -1,4 +1,4 @@
-# Maya UX Pro — Complete Hotkey Reference (`v2.7.3`)
+# Maya UX Pro — Complete Hotkey Reference (`v2.8.0`)
 
 > Press **`?`** (or **`F1`**) inside Blender's 3D Viewport at any time to open the live searchable **Hotkey Reference & Equivalence** dialog.
 
@@ -44,7 +44,7 @@
 | Command | Shortcut |
 |---|---|
 | Face Center-Only Selection | `LMB Click` on center dot (`⇧+Click` toggle, `⌃+Click` deselect) |
-| Edge Loop Double-Click | `LMB Double-Click` on edge (`⇧+Double-Click` add/toggle, `⌃+Double-Click` deselect) |
+| Edge / Face / Vert Loop Double-Click | `LMB Double-Click` Edge Loop (Face/Vert Shell) · `⇧+Double-Click` Face/Vert Loop · `⌃+Double-Click` deselect |
 | Enlarged Selected Vertices | Preferences → **Enlarge Selected Vertices** / **Selected Vertex Size (px)** (`6 px` default) |
 | Orthographic Select-Through (Shaded) | `LMB Drag` / `LMB Click` in Ortho views (selects front & hidden back Verts/Edges/Faces even in Shaded mode) |
 | Grow / Shrink Selection (1 step per press) | `>` / `<` (Italian/EU ISO `<>` or `⇧ + .` / `⇧ + ,`) |
@@ -64,7 +64,7 @@
 | Duplicate In-Place / +Transform / Special | `⌘ + D` / `⇧ + D` / `⌘ + ⇧ + D` |
 | Delete History | `⌥ + ⇧ + D` |
 | Group / Parent / Unparent | `⌘ + G` / `P` / `⇧ + P` |
-| Maya Extrude (Face/Edge/Vert/Curve) | `⌘ + E` (`⌘ + ⇧ + E` Toggle Keep Faces Together) |
+| Maya Extrude (Face/Edge/Vert/Curve) | `⌘ + E` (`G` Repeat Extrude · `⌘ + ⇧ + E` Keep Faces Together) |
 | Bevel / Multi-Cut | `⌘ + B` / `⌘ + ⇧ + X` |
 | Bridge / Merge Menu / Reverse Normals | `⌘ + ⇧ + B` / `M` (`⌘ + ⌥ + M`) / `⌥ + N` |
 | Target Weld / Quad Draw / Make Live | `⇧ + RMB` / `N → Maya → Retopo` / Top Shelf |

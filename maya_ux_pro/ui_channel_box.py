@@ -165,6 +165,7 @@ class MAYA_UX_PT_transform_pivot(bpy.types.Panel):
         ex_row2.operator("maya_ux.toggle_extrude_space", text=f"Space: {sp.title()}", icon="ORIENTATION_NORMAL")
         ex_row2.operator("maya_ux.extrude_along_curve", text="Along Curve", icon="CURVE_BEZCURVE")
         ex_box.prop(context.scene, "maya_ux_extrude_curve", text="Curve")
+        ex_box.operator("maya_ux.cleanup_extrude", text="Fix Double Extrude", icon="AUTOMERGE_ON")
 
         # MMB Virtual Drag Axis Lock
         yup_mode = bool(getattr(get_prefs(context), "channel_box_yup", False))

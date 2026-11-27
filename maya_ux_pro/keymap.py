@@ -414,7 +414,7 @@ def register_keymaps():
         _add_kmi(km_object, "maya_ux.parent_to_active", "P")
         _add_kmi(km_object, "maya_ux.unparent_keep_transform", "P", shift=True)
         _add_kmi(km_object, "screen.repeat_last", "G")
-        _add_kmi(km_mesh, "screen.repeat_last", "G")
+        _add_kmi(km_mesh, "maya_ux.repeat_last", "G")
 
     # 6. Selection, Pick Walk & Soft Select
     if prefs.enable_selection_keys:
