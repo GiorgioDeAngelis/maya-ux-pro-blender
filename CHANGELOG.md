@@ -2,6 +2,14 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.8.2] - 2026-11-27
+### Fixed
+- **Maya Extrude 3D Show Manipulator rebuilt on Blender native C++ gizmos (`ops_extrude.py`)**:
+  - Replaced custom arrow/ring gizmos with native `GIZMO_GT_arrow_3d` (`NORMAL` arrows + `BOX` axis scale handles) and `GIZMO_GT_dial_3d` (`TWIST` ring) bound via `target_set_handler("offset", get=..., set=...)` for thick C++ hover hitboxes and reliable 3D cursor tracking across Perspective, Ortho, Quad View, and 1080p/Retina viewports.
+  - Eliminated severe handle overlap where the center scale cube (`select_bias=12`) and `SCALE_Z` cube stole clicks along the Blue Extrude Arrow and Twist ring intercepted Red/Green arrow shafts.
+  - Fixed `SCALE_Z` being a silent no-op on planar faces (`rel.z == 0`), froze `matrix_basis` updates during active drags to prevent feedback runaway, preserved the session header after drag exit, and guarded delayed `bpy.msgbus` `mesh_select_mode` callbacks so they never terminate a newly started Extrude session.
+  - Fixed `ReferenceError: BMVert has been removed` when extruding multi-face grids containing interior vertices (`_map_extruded_verts`).
+
 ## [2.8.1] - 2026-11-27
 ### Fixed
 - **Maya Extrude Show Manipulator handles were dead (`ops_extrude.py`)**: dragging the Blue/Red/Green arrows, the Cyan center cube, the axis scale cubes or the Twist ring had no effect in Blender 5.x because the handles delegated to a separate modal operator through `target_set_operator`, whose mouse-move events were swallowed by the gizmo tweak loop.

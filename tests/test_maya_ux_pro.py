@@ -1855,10 +1855,11 @@ def test_maya_extrude_pro():
     assert bpy.context.scene.transform_orientation_slots[0].type == "GLOBAL"
 
     # 9. Native 3D Show Manipulator (VIEW3D_GGT_maya_extrude), opposite-face Normal Push, Uniform Scale, G Repeat & Cleanup
-    assert "bl_rna" in ops_extrude.VIEW3D_GT_maya_extrude_arrow.__dict__
     assert "bl_rna" in ops_extrude.VIEW3D_GT_maya_extrude_box.__dict__
-    assert "bl_rna" in ops_extrude.VIEW3D_GT_maya_extrude_ring.__dict__
+    assert "bl_rna" in ops_extrude.VIEW3D_GT_maya_extrude_button.__dict__
     assert "bl_rna" in ops_extrude.VIEW3D_GGT_maya_extrude.__dict__
+    assert not hasattr(ops_extrude, "VIEW3D_GT_maya_extrude_arrow")
+    assert not hasattr(ops_extrude, "VIEW3D_GT_maya_extrude_ring")
     assert ops_extrude.VIEW3D_GGT_maya_extrude.poll(bpy.context) is False
 
     # Select 2 opposite faces (+X and -X) on a fresh Cube and push both via AUTO_Z (Normal Push)
@@ -1893,11 +1894,18 @@ def test_maya_extrude_pro():
     assert abs(max(xs_sc) - 1.5) < 1e-4 and abs(min(xs_sc) + 1.5) < 1e-4
     assert all(f.calc_area() < 1.5 for f in bm_sc_check.faces if f.select)
 
-    # v2.8.1: handles drag natively via Gizmo invoke/modal/exit (no dead target operator)
-    for gz_cls in (ops_extrude.VIEW3D_GT_maya_extrude_arrow, ops_extrude.VIEW3D_GT_maya_extrude_box, ops_extrude.VIEW3D_GT_maya_extrude_ring):
-        assert callable(gz_cls.__dict__.get("invoke")) and callable(gz_cls.__dict__.get("modal")) and callable(gz_cls.__dict__.get("exit"))
+    # v2.8.2: center cube drags via Gizmo invoke/modal/exit; arrows & twist dial use native C++ GIZMO_GT_arrow_3d / GIZMO_GT_dial_3d
+    assert (
+        callable(ops_extrude.VIEW3D_GT_maya_extrude_box.__dict__.get("invoke"))
+        and callable(ops_extrude.VIEW3D_GT_maya_extrude_box.__dict__.get("modal"))
+        and callable(ops_extrude.VIEW3D_GT_maya_extrude_box.__dict__.get("exit"))
+    )
     assert "invoke" not in ops_extrude.VIEW3D_GT_maya_extrude_button.__dict__
     assert "bl_rna" in ops_extrude.VIEW3D_GT_maya_extrude_button.__dict__
+
+    # Delayed msgbus context callback must NOT kill active session when select mode hasn't changed
+    ops_extrude._on_extrude_context_change()
+    assert ops_extrude.is_extrude_session_active() is True
 
     bm_live = bmesh.from_edit_mesh(cube_opp.data)
     sel_before = {v.index: v.co.copy() for v in bm_live.verts if v.select}
@@ -1914,7 +1922,7 @@ def test_maya_extrude_pro():
     bm_live.verts.ensure_lookup_table()
     assert max((bm_live.verts[i].co - co).length for i, co in sel_before.items()) < 1e-6
 
-    for m in ("MOVE_X", "MOVE_Y", "UNIFORM_SCALE", "SCALE_X", "SCALE_Y", "TWIST"):  # SCALE_Z is a no-op on planar caps
+    for m in ("MOVE_X", "MOVE_Y", "UNIFORM_SCALE", "SCALE_X", "SCALE_Y", "SCALE_Z", "TWIST"):
         st = ops_extrude.begin_extrude_drag(bpy.context, m, 0.0, 0.0)
         ops_extrude.update_extrude_drag(st, 60.0, 20.0)
         bm_live = bmesh.from_edit_mesh(cube_opp.data)
@@ -1937,6 +1945,24 @@ def test_maya_extrude_pro():
     before_faces = len(bm_sc_check.faces)
     assert bpy.ops.maya_ux.repeat_last() == {"FINISHED"}
     assert len(bmesh.from_edit_mesh(cube_opp.data).faces) > before_faces
+
+    # Regression: extruding multi-face grid containing interior vertices must not raise BMVert removed
+    cube_grid = _reset_scene()
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.subdivide(number_cuts=2)
+    bpy.context.scene.tool_settings.mesh_select_mode = (False, False, True)
+    bm_g = bmesh.from_edit_mesh(cube_grid.data)
+    for el in list(bm_g.verts) + list(bm_g.edges) + list(bm_g.faces):
+        el.select = False
+    for f in bm_g.faces:
+        if f.normal.z > 0.9:
+            f.select = True
+    bm_g.select_flush_mode()
+    bmesh.update_edit_mesh(cube_grid.data)
+    assert bpy.ops.maya_ux.maya_extrude(space="LOCAL", thickness=0.3) == {"FINISHED"}
+    bm_g_check = bmesh.from_edit_mesh(cube_grid.data)
+    top_sel = [f for f in bm_g_check.faces if f.select]
+    assert len(top_sel) == 9 and all(abs(f.calc_center_median().z - 1.3) < 1e-4 for f in top_sel)
 
     # Cleanup accidental zero-thickness double extrude
     cube_dbl = _reset_scene()
@@ -1966,7 +1992,8 @@ def test_unregistration():
     maya_ux_pro.unregister()
     assert ops_extrude.is_extrude_session_active() is False
     assert "bl_rna" not in ops_extrude.VIEW3D_GGT_maya_extrude.__dict__
-    assert "bl_rna" not in ops_extrude.VIEW3D_GT_maya_extrude_arrow.__dict__
+    assert "bl_rna" not in ops_extrude.VIEW3D_GT_maya_extrude_box.__dict__
+    assert "bl_rna" not in ops_extrude.VIEW3D_GT_maya_extrude_button.__dict__
     assert "bl_rna" not in ops_viewport.VIEW3D_GGT_maya_center_scale.__dict__
     assert "bl_rna" not in ops_viewport.VIEW3D_GT_maya_center_scale_cube.__dict__
     assert ops_selection._SELECTED_VERT_DRAW_HANDLE is None

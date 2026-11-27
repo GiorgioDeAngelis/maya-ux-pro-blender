@@ -20,9 +20,17 @@ from mathutils import Euler, Matrix, Vector
 from .preferences import get_prefs
 
 _EXTRUDE_SESSION_ACTIVE: bool = False
+_EXTRUDE_SESSION_SEL_MODE: tuple[bool, bool, bool] | None = None
 _PRE_EXTRUDE_TOOL: str = "builtin.select_box"
 _PRE_EXTRUDE_ORIENT: str = "GLOBAL"
 _EXTRUDE_MSGBUS_OWNER = object()
+
+
+def _extrude_session_header(space: str) -> str:
+    return (
+        f"Maya Extrude [{space.title()}]: Blue Arrow = Normal Push | "
+        "Center Cube = Uniform Scale | G = Repeat Extrude | Q/W/E/R = Exit"
+    )
 
 
 def is_extrude_session_active() -> bool:
@@ -94,7 +102,7 @@ def _set_view3d_tool_safe(context, tool_id: str):
 
 def start_extrude_session(context, space: str):
     """Enter Extrude session and show the dedicated Maya Extrude 3D Show Manipulator."""
-    global _EXTRUDE_SESSION_ACTIVE, _PRE_EXTRUDE_TOOL, _PRE_EXTRUDE_ORIENT
+    global _EXTRUDE_SESSION_ACTIVE, _EXTRUDE_SESSION_SEL_MODE, _PRE_EXTRUDE_TOOL, _PRE_EXTRUDE_ORIENT
     from . import ops_viewport
 
     ctx = context or bpy.context
@@ -106,6 +114,8 @@ def start_extrude_session(context, space: str):
         _PRE_EXTRUDE_ORIENT = slots[0].type if (slots and len(slots) > 0) else "GLOBAL"
 
     _EXTRUDE_SESSION_ACTIVE = True
+    ts = getattr(ctx, "tool_settings", None)
+    _EXTRUDE_SESSION_SEL_MODE = tuple(bool(x) for x in ts.mesh_select_mode) if ts is not None else None
     if scene is not None:
         slots = getattr(scene, "transform_orientation_slots", None)
         if slots and len(slots) > 0:
@@ -114,18 +124,16 @@ def start_extrude_session(context, space: str):
     if bool(getattr(get_prefs(ctx), "extrude_activate_gizmo", True)):
         # Hide overlapping toolbar Move/Rotate/Scale gizmo while custom 3D Extrude Manipulator is visible.
         _set_view3d_tool_safe(ctx, "builtin.select_box")
-    _set_view3d_header_text(
-        ctx,
-        f"Maya Extrude [{space.title()}]: Blue Arrow = Normal Push | Center Cube = Uniform Scale | G = Repeat Extrude | Q/W/E/R = Exit",
-    )
+    _set_view3d_header_text(ctx, _extrude_session_header(space))
 
 
 def end_extrude_session(context=None, restore_tool: bool = True):
     """Exit Extrude session, hide Extrude manipulator, and restore prior tool & orientation."""
-    global _EXTRUDE_SESSION_ACTIVE
+    global _EXTRUDE_SESSION_ACTIVE, _EXTRUDE_SESSION_SEL_MODE
     if not _EXTRUDE_SESSION_ACTIVE:
         return
     _EXTRUDE_SESSION_ACTIVE = False
+    _EXTRUDE_SESSION_SEL_MODE = None
     ctx = context or bpy.context
     scene = getattr(ctx, "scene", None)
     if scene is not None:
@@ -141,8 +149,16 @@ def end_extrude_session(context=None, restore_tool: bool = True):
 
 
 def _on_extrude_context_change():
-    if _EXTRUDE_SESSION_ACTIVE:
-        end_extrude_session(bpy.context, restore_tool=True)
+    if not _EXTRUDE_SESSION_ACTIVE:
+        return
+    ctx = bpy.context
+    if getattr(ctx, "mode", "") != "EDIT_MESH":
+        end_extrude_session(ctx, restore_tool=True)
+        return
+    ts = getattr(ctx, "tool_settings", None)
+    if ts is not None and _EXTRUDE_SESSION_SEL_MODE is not None:
+        if tuple(bool(x) for x in ts.mesh_select_mode) != _EXTRUDE_SESSION_SEL_MODE:
+            end_extrude_session(ctx, restore_tool=True)
 
 
 def _vec_norm(v: Vector, fallback: Vector) -> Vector:
@@ -460,18 +476,35 @@ def _connected_face_islands(faces: list[bmesh.types.BMFace]) -> list[list[bmesh.
     return islands
 
 
-def _map_extruded_verts(old_verts: list[bmesh.types.BMVert], new_vert_set: set[bmesh.types.BMVert]) -> dict[bmesh.types.BMVert, bmesh.types.BMVert]:
+def _map_extruded_verts(
+    old_verts: list[bmesh.types.BMVert],
+    new_vert_set: set[bmesh.types.BMVert],
+    old_cos: dict[bmesh.types.BMVert, Vector] | None = None,
+) -> dict[bmesh.types.BMVert, bmesh.types.BMVert]:
     """Map each pre-extrude cap vertex cleanly to its unique post-extrude cap vertex."""
     mapping: dict[bmesh.types.BMVert, bmesh.types.BMVert] = {}
     for ov in old_verts:
+        if not ov.is_valid:
+            continue
         if ov in new_vert_set:
             mapping[ov] = ov
             continue
         for e in ov.link_edges:
             other = e.other_vert(ov)
-            if other in new_vert_set:
+            if other.is_valid and other in new_vert_set:
                 mapping[ov] = other
                 break
+    # Interior vertices of multi-face islands are replaced rather than linked by a strut edge
+    if old_cos is not None and len(mapping) < len(old_verts):
+        used = set(mapping.values())
+        unused = [nv for nv in new_vert_set if nv.is_valid and nv not in used]
+        for ov in old_verts:
+            if ov in mapping or ov not in old_cos or not unused:
+                continue
+            ref = old_cos[ov]
+            best = min(unused, key=lambda nv: (nv.co - ref).length_squared)
+            mapping[ov] = best
+            unused.remove(best)
     return mapping
 
 
@@ -498,8 +531,13 @@ def extrude_faces_maya(
     final_faces: list[bmesh.types.BMFace] = []
 
     for group in groups:
+        group = [f for f in group if f.is_valid]
+        if not group:
+            continue
         cap_set = set(group)
-        cap_verts = list({v for f in group for v in f.verts})
+        cap_verts = list({v for f in group for v in f.verts if v.is_valid})
+        if not cap_verts:
+            continue
         even_norms = _even_vertex_normals(cap_verts, cap_set)
         miters = _inward_face_miters(cap_verts, cap_set)
         hint_x = None
@@ -521,20 +559,26 @@ def extrude_faces_maya(
 
         for step in range(1, divs + 1):
             t = step / divs
-            cur_verts = list({v for f in cur_faces for v in f.verts})
+            cur_faces = [f for f in cur_faces if f.is_valid]
+            if not cur_faces:
+                break
+            cur_verts = list({v for f in cur_faces for v in f.verts if v.is_valid})
+            old_cos = {v: v.co.copy() for v in cur_verts}
             if keep_faces_together:
-                cur_edges = list({e for f in cur_faces for e in f.edges})
+                cur_edges = list({e for f in cur_faces for e in f.edges if e.is_valid})
                 res = bmesh.ops.extrude_face_region(bm, geom=cur_faces + cur_edges + cur_verts)
                 new_faces = [g for g in res["geom"] if isinstance(g, bmesh.types.BMFace) and g.is_valid]
             else:
                 res = bmesh.ops.extrude_discrete_faces(bm, faces=cur_faces)
                 new_faces = [f for f in res["faces"] if f.is_valid]
 
-            new_vset = {v for f in new_faces for v in f.verts}
-            vmap = _map_extruded_verts(cur_verts, new_vset)
+            new_vset = {v for f in new_faces for v in f.verts if v.is_valid}
+            vmap = _map_extruded_verts(cur_verts, new_vset, old_cos=old_cos)
             next_to_seed: dict[bmesh.types.BMVert, bmesh.types.BMVert] = {}
 
             for old_v, new_v in vmap.items():
+                if not new_v.is_valid:
+                    continue
                 seed_v = cur_to_seed.get(old_v)
                 if seed_v is None:
                     continue
@@ -622,14 +666,20 @@ def extrude_edges_maya(
 
         for step in range(1, divs + 1):
             t = step / divs
-            cur_verts = list({v for e in cur_edges for v in e.verts})
+            cur_edges = [e for e in cur_edges if e.is_valid]
+            if not cur_edges:
+                break
+            cur_verts = list({v for e in cur_edges for v in e.verts if v.is_valid})
+            old_cos = {v: v.co.copy() for v in cur_verts}
             res = bmesh.ops.extrude_edge_only(bm, edges=cur_edges)
             new_edges = [g for g in res["geom"] if isinstance(g, bmesh.types.BMEdge) and g.is_valid]
-            new_vset = {v for e in new_edges for v in e.verts}
-            vmap = _map_extruded_verts(cur_verts, new_vset)
+            new_vset = {v for e in new_edges for v in e.verts if v.is_valid}
+            vmap = _map_extruded_verts(cur_verts, new_vset, old_cos=old_cos)
             next_to_seed: dict[bmesh.types.BMVert, bmesh.types.BMVert] = {}
 
             for old_v, new_v in vmap.items():
+                if not new_v.is_valid:
+                    continue
                 seed_v = cur_to_seed.get(old_v)
                 if seed_v is None:
                     continue
@@ -1228,6 +1278,11 @@ def apply_extrude_drag_delta(
         base_cos = g["base_cos"]
         even_norms = g["even_norms"]
         miters = g["miters"]
+        has_z_extent = (
+            any(abs((basis_inv @ (base_cos[v] - pivot)).z) > 1e-4 for v in g["verts"])
+            if drag_mode == "SCALE_Z"
+            else True
+        )
 
         for v in g["verts"]:
             if not v.is_valid:
@@ -1254,7 +1309,13 @@ def apply_extrude_drag_delta(
                 elif drag_mode == "SCALE_Y":
                     rel.y *= max(0.01, 1.0 + amount)
                 elif drag_mode == "SCALE_Z":
-                    rel.z *= max(0.01, 1.0 + amount)
+                    s = max(0.01, 1.0 + amount)
+                    if has_z_extent:
+                        rel.z *= s
+                    else:
+                        # Planar caps have rel.z == 0; scale cleanly in-plane instead of being a dead handle.
+                        rel.x *= s
+                        rel.y *= s
                 elif drag_mode == "TWIST":
                     rel = Euler((0.0, 0.0, amount), "XYZ").to_matrix() @ rel
                 v.co = pivot + basis @ rel
@@ -1446,17 +1507,19 @@ def compute_extrude_drag_amount(state: dict, mouse_x: float, mouse_y: float, pre
     elif mode in _EXTRUDE_DRAG_SCALE_MODES:
         amount = None
         if p0 is not None:
-            if mode == "UNIFORM_SCALE" or sdir is None:
+            if mode == "UNIFORM_SCALE":
                 d0 = (start - p0).length
-                d1 = (cur - p0).length
-            else:
+                if abs(d0) > 12.0:
+                    d1 = (cur - p0).length
+                    amount = d1 / d0 - 1.0
+            elif sdir is not None:
                 d0 = (start - p0).dot(sdir)
-                d1 = (cur - p0).dot(sdir)
-            if abs(d0) > 12.0:
-                amount = d1 / d0 - 1.0
+                if abs(d0) > 12.0:
+                    d1 = (cur - p0).dot(sdir)
+                    amount = d1 / d0 - 1.0
         if amount is None:
             px = delta.dot(sdir) if sdir is not None else (delta.x + delta.y * 0.5)
-            amount = px * 0.006
+            amount = px * (0.008 if mode == "UNIFORM_SCALE" else 0.006)
     else:
         px = delta.dot(sdir) if sdir is not None else (delta.x + delta.y)
         amount = px * state.get("units_per_px", 0.01)
@@ -1645,7 +1708,11 @@ def _gizmo_drag_exit(self, context, cancel):
     """Native Gizmo exit: restore on cancel, otherwise push an undo step."""
     state = getattr(self, "drag_state", None)
     self.drag_state = None
-    _extrude_drag_header(context, None)
+    if is_extrude_session_active():
+        sp = getattr(getattr(context, "scene", None), "maya_ux_extrude_space", "LOCAL")
+        _set_view3d_header_text(context, _extrude_session_header(sp))
+    else:
+        _extrude_drag_header(context, None)
     if state is None:
         return
     if cancel:
@@ -1659,25 +1726,8 @@ def _gizmo_drag_exit(self, context, cancel):
         context.area.tag_redraw()
 
 
-class VIEW3D_GT_maya_extrude_arrow(bpy.types.Gizmo):
-    """Arrow gizmo handle for Maya Extrude Show Manipulator (native drag)."""
-
-    bl_idname = "VIEW3D_GT_maya_extrude_arrow"
-    __slots__ = ("drag_mode", "drag_state")
-
-    invoke = _gizmo_drag_invoke
-    modal = _gizmo_drag_modal
-    exit = _gizmo_drag_exit
-
-    def draw(self, context):
-        self.draw_preset_arrow(self.matrix_world, axis="POS_Z")
-
-    def draw_select(self, context, select_id):
-        self.draw_preset_arrow(self.matrix_world, axis="POS_Z", select_id=select_id)
-
-
 class VIEW3D_GT_maya_extrude_box(bpy.types.Gizmo):
-    """Cube handle for Maya Extrude Uniform Scale & Axis Scale (native drag)."""
+    """Cube handle for Maya Extrude Uniform Scale (native drag)."""
 
     bl_idname = "VIEW3D_GT_maya_extrude_box"
     __slots__ = ("drag_mode", "drag_state")
@@ -1687,27 +1737,10 @@ class VIEW3D_GT_maya_extrude_box(bpy.types.Gizmo):
     exit = _gizmo_drag_exit
 
     def draw(self, context):
-        self.draw_preset_box(self.matrix_world @ Matrix.Scale(0.11, 4))
+        self.draw_preset_box(self.matrix_world @ Matrix.Scale(0.09, 4))
 
     def draw_select(self, context, select_id):
-        self.draw_preset_box(self.matrix_world @ Matrix.Scale(0.11, 4), select_id=select_id)
-
-
-class VIEW3D_GT_maya_extrude_ring(bpy.types.Gizmo):
-    """Ring handle for Maya Extrude Twist (native drag)."""
-
-    bl_idname = "VIEW3D_GT_maya_extrude_ring"
-    __slots__ = ("drag_mode", "drag_state")
-
-    invoke = _gizmo_drag_invoke
-    modal = _gizmo_drag_modal
-    exit = _gizmo_drag_exit
-
-    def draw(self, context):
-        self.draw_preset_circle(self.matrix_world, axis="POS_Z")
-
-    def draw_select(self, context, select_id):
-        self.draw_preset_circle(self.matrix_world, axis="POS_Z", select_id=select_id)
+        self.draw_preset_box(self.matrix_world @ Matrix.Scale(0.09, 4), select_id=select_id)
 
 
 class VIEW3D_GT_maya_extrude_button(bpy.types.Gizmo):
@@ -1742,62 +1775,166 @@ class VIEW3D_GGT_maya_extrude(bpy.types.GizmoGroup):
         space = ops_viewport._get_view3d_space(context)
         return space is not None and space.type == "VIEW_3D" and bool(space.show_gizmo)
 
-    def _new_arrow(self, color, drag_mode: str, offset_rot: Matrix):
-        gz = self.gizmos.new(VIEW3D_GT_maya_extrude_arrow.bl_idname)
-        gz.color = color
-        gz.alpha = 0.90
-        gz.color_highlight = (1.0, 0.95, 0.15)
-        gz.alpha_highlight = 1.0
-        gz.use_draw_scale = True
-        gz.use_draw_offset_scale = True
-        gz.use_draw_modal = True
-        gz.scale_basis = 1.0
-        gz.line_width = 2.5
-        gz.matrix_offset = offset_rot
-        gz.drag_mode = drag_mode
-        gz.drag_state = None
-        return gz
+    def _bind_native_offset_handler(self, gz, drag_mode: str, is_scale: bool = False, is_twist: bool = False):
+        def get_cb():
+            drag = getattr(self, "_native_drag", None)
+            if drag is not None and drag["gz"] == gz and gz.is_modal:
+                return drag["raw_val"]
+            return 0.0
 
-    def _new_box(self, color, drag_mode: str, offset_pos: tuple[float, float, float], scale_mult: float = 1.0, bias: float = 0.0):
-        gz = self.gizmos.new(VIEW3D_GT_maya_extrude_box.bl_idname)
+        def set_cb(value):
+            ctx = bpy.context
+            drag = getattr(self, "_native_drag", None)
+            if drag is None or drag["gz"] != gz:
+                state = begin_extrude_drag(ctx, drag_mode, 0.0, 0.0)
+                if state is None:
+                    return
+                axis_vec = _EXTRUDE_DRAG_AXES.get(drag_mode, Vector((0.0, 0.0, 1.0)))
+                local_col = state["snapshot"][0]["basis"] @ axis_vec
+                axis_world_scale = max(1e-4, (state["obj"].matrix_world.to_3x3() @ local_col).length)
+                scale_ref = max(0.5, gz.matrix_world.to_scale().x * 1.45)
+                drag = {
+                    "gz": gz,
+                    "state": state,
+                    "raw_val": 0.0,
+                    "axis_world_scale": axis_world_scale,
+                    "scale_ref": scale_ref,
+                    "is_scale": is_scale,
+                    "is_twist": is_twist,
+                }
+                self._native_drag = drag
+
+            val = float(value)
+            drag["raw_val"] = val
+            if drag["is_twist"]:
+                amount = val
+            elif drag["is_scale"]:
+                amount = max(-0.99, val / drag["scale_ref"])
+            else:
+                amount = val / drag["axis_world_scale"]
+
+            set_extrude_drag_amount(drag["state"], amount)
+            _extrude_drag_header(ctx, drag["state"])
+
+        gz.target_set_handler("offset", get=get_cb, set=set_cb)
+
+    def _finish_native_drag_if_ended(self, context):
+        drag = getattr(self, "_native_drag", None)
+        if drag is None or drag["gz"].is_modal:
+            return
+        self._native_drag = None
+        if is_extrude_session_active():
+            sp = getattr(getattr(context, "scene", None), "maya_ux_extrude_space", "LOCAL")
+            _set_view3d_header_text(context, _extrude_session_header(sp))
+        else:
+            _set_view3d_header_text(context, None)
+        if abs(drag["state"].get("amount", 0.0)) > 1e-9:
+            try:
+                bpy.ops.ed.undo_push(message=f"Maya Extrude {_EXTRUDE_DRAG_LABELS.get(drag['state']['mode'], 'Handle')}")
+            except (RuntimeError, TypeError):
+                pass
+
+    def _new_native_arrow(
+        self,
+        color,
+        drag_mode: str,
+        rot_offset: Matrix,
+        *,
+        draw_style: str,
+        draw_options: set[str],
+        length: float,
+        scale_basis: float,
+        line_width: float,
+        select_bias: float,
+        is_scale: bool,
+    ):
+        gz = self.gizmos.new("GIZMO_GT_arrow_3d")
+        gz.draw_style = draw_style
+        gz.draw_options = draw_options
+        gz.length = length
         gz.color = color
-        gz.alpha = 0.90
+        gz.alpha = 0.92
         gz.color_highlight = (1.0, 0.95, 0.15)
         gz.alpha_highlight = 1.0
         gz.use_draw_scale = True
-        gz.use_draw_offset_scale = True
         gz.use_draw_modal = True
-        gz.scale_basis = 1.0
-        gz.select_bias = bias
-        gz.matrix_offset = Matrix.Translation(offset_pos) @ Matrix.Scale(scale_mult, 4)
-        gz.drag_mode = drag_mode
-        gz.drag_state = None
+        gz.use_draw_value = True
+        gz.scale_basis = scale_basis
+        gz.line_width = line_width
+        gz.select_bias = select_bias
+        self._bind_native_offset_handler(gz, drag_mode, is_scale=is_scale)
+        self._rot_offsets[gz] = rot_offset
         return gz
 
     def setup(self, context):
-        self.gz_move_z = self._new_arrow((0.20, 0.58, 1.0), "AUTO_Z", Matrix.Identity(4))
-        self.gz_move_x = self._new_arrow((0.95, 0.25, 0.25), "MOVE_X", Matrix.Rotation(math.radians(90.0), 4, "Y"))
-        self.gz_move_y = self._new_arrow((0.25, 0.90, 0.35), "MOVE_Y", Matrix.Rotation(math.radians(-90.0), 4, "X"))
+        self._native_drag = None
+        self._rot_offsets = {}
+        rot_x = Matrix.Rotation(math.radians(90.0), 4, "Y")
+        rot_y = Matrix.Rotation(math.radians(-90.0), 4, "X")
+        rot_id = Matrix.Identity(4)
 
-        self.gz_scale_center = self._new_box((0.35, 0.88, 0.98), "UNIFORM_SCALE", (0.0, 0.0, 0.0), scale_mult=1.0, bias=12.0)
-        self.gz_scale_x = self._new_box((0.95, 0.25, 0.25), "SCALE_X", (0.58, 0.0, 0.0), scale_mult=0.68)
-        self.gz_scale_y = self._new_box((0.25, 0.90, 0.35), "SCALE_Y", (0.0, 0.58, 0.0), scale_mult=0.68)
-        self.gz_scale_z = self._new_box((0.20, 0.58, 1.0), "SCALE_Z", (0.0, 0.0, 0.58), scale_mult=0.68)
-
-        gz_twist = self.gizmos.new(VIEW3D_GT_maya_extrude_ring.bl_idname)
-        gz_twist.color = (0.85, 0.88, 0.92)
-        gz_twist.alpha = 0.45
+        # 1. Twist Dial (lowest selection priority, outer ring)
+        gz_twist = self.gizmos.new("GIZMO_GT_dial_3d")
+        gz_twist.draw_options = set()
+        gz_twist.color = (0.88, 0.90, 0.94)
+        gz_twist.alpha = 0.55
         gz_twist.color_highlight = (1.0, 0.95, 0.15)
         gz_twist.alpha_highlight = 1.0
         gz_twist.use_draw_scale = True
-        gz_twist.use_draw_offset_scale = True
-        gz_twist.scale_basis = 1.0
-        gz_twist.line_width = 1.5
-        gz_twist.matrix_offset = Matrix.Scale(0.75, 4)
-        gz_twist.drag_mode = "TWIST"
-        gz_twist.drag_state = None
+        gz_twist.use_draw_modal = True
+        gz_twist.use_draw_value = True
+        gz_twist.scale_basis = 1.25
+        gz_twist.line_width = 2.0
+        gz_twist.select_bias = -4.0
+        self._bind_native_offset_handler(gz_twist, "TWIST", is_twist=True)
+        self._rot_offsets[gz_twist] = rot_id
         self.gz_twist = gz_twist
 
+        # 2. Axis Scale Handles (BOX style, compact length=0.56 with select_bias=8.5 above arrows)
+        self.gz_scale_x = self._new_native_arrow(
+            (0.95, 0.25, 0.25), "SCALE_X", rot_x,
+            draw_style="BOX", draw_options=set(), length=0.56, scale_basis=1.0, line_width=2.0, select_bias=8.5, is_scale=True,
+        )
+        self.gz_scale_y = self._new_native_arrow(
+            (0.25, 0.90, 0.35), "SCALE_Y", rot_y,
+            draw_style="BOX", draw_options=set(), length=0.56, scale_basis=1.0, line_width=2.0, select_bias=8.5, is_scale=True,
+        )
+        self.gz_scale_z = self._new_native_arrow(
+            (0.20, 0.58, 1.0), "SCALE_Z", rot_id,
+            draw_style="BOX", draw_options=set(), length=0.56, scale_basis=1.0, line_width=2.0, select_bias=8.5, is_scale=True,
+        )
+
+        # 3. Normal / Move Arrows (extend well beyond scale handles & twist dial)
+        self.gz_move_x = self._new_native_arrow(
+            (0.95, 0.25, 0.25), "MOVE_X", rot_x,
+            draw_style="NORMAL", draw_options={"STEM"}, length=1.30, scale_basis=1.0, line_width=3.0, select_bias=5.5, is_scale=False,
+        )
+        self.gz_move_y = self._new_native_arrow(
+            (0.25, 0.90, 0.35), "MOVE_Y", rot_y,
+            draw_style="NORMAL", draw_options={"STEM"}, length=1.30, scale_basis=1.0, line_width=3.0, select_bias=5.5, is_scale=False,
+        )
+        self.gz_move_z = self._new_native_arrow(
+            (0.20, 0.58, 1.0), "AUTO_Z", rot_id,
+            draw_style="NORMAL", draw_options={"STEM"}, length=1.45, scale_basis=1.0, line_width=3.0, select_bias=6.0, is_scale=False,
+        )
+
+        # 4. Center Uniform Scale Cube (bias=10.0 above arrows & scale handles at center)
+        gz_center = self.gizmos.new(VIEW3D_GT_maya_extrude_box.bl_idname)
+        gz_center.color = (0.35, 0.88, 0.98)
+        gz_center.alpha = 0.92
+        gz_center.color_highlight = (1.0, 0.95, 0.15)
+        gz_center.alpha_highlight = 1.0
+        gz_center.use_draw_scale = True
+        gz_center.use_draw_offset_scale = True
+        gz_center.use_draw_modal = True
+        gz_center.scale_basis = 1.0
+        gz_center.select_bias = 10.0
+        gz_center.drag_mode = "UNIFORM_SCALE"
+        gz_center.drag_state = None
+        self._rot_offsets[gz_center] = rot_id
+        self.gz_scale_center = gz_center
+
+        # 5. Local <-> World Toggle Button (outside 1.25 Twist ring, radius ~1.63)
         gz_sw = self.gizmos.new(VIEW3D_GT_maya_extrude_button.bl_idname)
         gz_sw.color = (0.35, 0.88, 0.98)
         gz_sw.alpha = 0.95
@@ -1807,25 +1944,20 @@ class VIEW3D_GGT_maya_extrude(bpy.types.GizmoGroup):
         gz_sw.use_draw_offset_scale = True
         gz_sw.scale_basis = 1.0
         gz_sw.line_width = 3.0
-        gz_sw.matrix_offset = Matrix.Translation((0.46, 0.46, 0.46)) @ Matrix.Scale(0.11, 4)
+        gz_sw.select_bias = 12.0
+        gz_sw.matrix_offset = Matrix.Translation((1.15, 1.15, 0.0)) @ Matrix.Scale(0.11, 4)
         gz_sw.target_set_operator("maya_ux.toggle_extrude_space")
+        self._rot_offsets[gz_sw] = rot_id
         self.gz_space_btn = gz_sw
 
         self._update_gizmos(context)
 
     def _update_gizmos(self, context):
+        self._finish_native_drag_if_ended(context)
+        all_gz = tuple(self._rot_offsets.keys())
+        if any(gz.is_modal for gz in all_gz):
+            return
         pivot, rot4 = _compute_extrude_manipulator_matrix(context)
-        all_gz = (
-            self.gz_move_z,
-            self.gz_move_x,
-            self.gz_move_y,
-            self.gz_scale_center,
-            self.gz_scale_x,
-            self.gz_scale_y,
-            self.gz_scale_z,
-            self.gz_twist,
-            self.gz_space_btn,
-        )
         if pivot is None:
             for gz in all_gz:
                 gz.hide = True
@@ -1834,10 +1966,10 @@ class VIEW3D_GGT_maya_extrude(bpy.types.GizmoGroup):
         mat = Matrix.Translation(pivot) @ rot4
         is_local = getattr(context.scene, "maya_ux_extrude_space", "LOCAL") == "LOCAL"
         self.gz_space_btn.color = (0.35, 0.88, 0.98) if is_local else (1.0, 0.58, 0.18)
-        for gz in all_gz:
+        for gz, rot_off in self._rot_offsets.items():
             gz.hide = False
             gz.hide_select = False
-            gz.matrix_basis = mat
+            gz.matrix_basis = mat @ rot_off
 
     def refresh(self, context):
         self._update_gizmos(context)
@@ -1868,9 +2000,7 @@ CLASSES = (
     MAYA_UX_OT_toggle_keep_faces_together,
     MAYA_UX_OT_toggle_extrude_space,
     MAYA_UX_OT_extrude_along_curve,
-    VIEW3D_GT_maya_extrude_arrow,
     VIEW3D_GT_maya_extrude_box,
-    VIEW3D_GT_maya_extrude_ring,
     VIEW3D_GT_maya_extrude_button,
     VIEW3D_GGT_maya_extrude,
 )
