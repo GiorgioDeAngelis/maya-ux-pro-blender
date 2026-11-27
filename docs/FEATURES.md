@@ -1,4 +1,4 @@
-# Maya UX Pro — Features & Module Architecture (`v2.7.1`)
+# Maya UX Pro — Features & Module Architecture (`v2.7.2`)
 
 Maya UX Pro is organized into **26 cleanly modular Python files** inside `maya_ux_pro/`. Every module can be toggled or configured in **Preferences → Extensions / Add-ons → Maya UX Pro**.
 
@@ -30,7 +30,7 @@ Maya UX Pro is organized into **26 cleanly modular Python files** inside `maya_u
   - Active `W` / `E` / `R` / `T` with selected **Objects**, **Edit Mesh Vertices/Edges/Faces**, **Curve points**, **Armature bones**, or **Pose bones** → transforms globally or constrained to the last gizmo axis (or explicit `MMB` axis lock buttons in `N → Maya`).
   - Inherits Object Mode's transform tool automatically when switching into Edit Mode (`F8..F11`, RMB menu, or `Tab`) until you press `Q`.
   - When Snapping (`V`/`C`/`X`) is held, enables `use_snap_self=True` in Edit Mode so vertices/edges snap cleanly onto the same mesh or background objects.
-- **Viewport Controls**: `maya_ux.set_tool`, `maya_ux.gizmo_size` (`=`/`-`), `maya_ux.set_shading` (`4/5/6/7`), `maya_ux.toggle_wireframe_on_shaded` (`⌥+5`), `maya_ux.toggle_xray` (`⌥+X`), `maya_ux.isolate_select`, `maya_ux.smart_hide` (`H` / `⌃+H` / `⇧+H` / `⌥+H` / `⌃+⇧+H`), `maya_ux.camera_view_undo`/`redo` (`[`/`]`), `maya_ux.increment_save`, `maya_ux.screen_nudge` (`⌥+Arrows`).
+- **Viewport Controls**: `maya_ux.set_tool` (+ Maya Center Global Scale cube `VIEW3D_GGT_maya_center_scale` active in `R` Scale mode), `maya_ux.gizmo_size` (`=`/`-`), `maya_ux.set_shading` (`4/5/6/7`), `maya_ux.toggle_wireframe_on_shaded` (`⌥+5`), `maya_ux.toggle_xray` (`⌥+X`), `maya_ux.isolate_select`, `maya_ux.smart_hide` (`H` / `⌃+H` / `⇧+H` / `⌥+H` / `⌃+⇧+H`), `maya_ux.camera_view_undo`/`redo` (`[`/`]`), `maya_ux.increment_save`, `maya_ux.screen_nudge` (`⌥+Arrows`).
 
 ---
 

@@ -2,6 +2,12 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.7.2] - 2026-11-27
+### Added
+- **Maya Center Global Scale Manipulator (`ops_viewport.py`)**:
+  - Added a dedicated interactive center cube gizmo (`VIEW3D_GGT_maya_center_scale` / `VIEW3D_GT_maya_center_scale_cube`) in **Scale Mode (`R` / `builtin.scale`)** across Object Mode and Edit Mode.
+  - Dragging the cyan center cube performs uniform **Global Scale** (`transform.resize`, all axes locked proportionally together) around the active pivot (`Median`, `Bounding Box`, `Active Element`, or `3D Cursor`).
+
 ## [2.7.1] - 2026-11-27
 ### Fixed
 - **All-in-One Transform Gizmo (`Translate + Rotate + Scale`) Restricted Strictly to Extrude Mode (`ops_extrude.py`, `ops_viewport.py`, `ops_startup.py`, `ops_pivot_snap.py`, `ops_selection.py`)**:

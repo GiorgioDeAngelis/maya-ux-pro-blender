@@ -6,7 +6,7 @@ import re
 import bmesh
 import bpy
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, StringProperty
-from mathutils import Quaternion, Vector
+from mathutils import Matrix, Quaternion, Vector
 
 # Tracks last-hidden object names per scene name for Maya-style H / Ctrl+Shift+H toggle.
 _LAST_HIDDEN_OBJECTS: dict[str, list[str]] = {}
@@ -910,6 +910,168 @@ class MAYA_UX_OT_set_mmb_axis(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def is_scale_tool_active(context) -> bool:
+    """Return True only when the Scale tool (builtin.scale) is active in 3D View."""
+    ws = getattr(context, "workspace", None)
+    if ws is not None and hasattr(ws, "tools"):
+        try:
+            tool = ws.tools.from_space_view3d_mode(getattr(context, "mode", "OBJECT"))
+            if tool is not None and tool.idname:
+                if tool.idname == "builtin.scale":
+                    return True
+                return bool(bpy.app.background and _ACTIVE_TOOL_ID == "builtin.scale")
+        except Exception:
+            pass
+    return _ACTIVE_TOOL_ID == "builtin.scale"
+
+
+def compute_selection_pivot_world(context) -> Vector | None:
+    """Compute world-space pivot location for the current Object or Component selection."""
+    scene = getattr(context, "scene", None)
+    ts = getattr(scene, "tool_settings", None) if scene is not None else None
+    pivot_mode = getattr(ts, "transform_pivot_point", "MEDIAN_POINT") if ts is not None else "MEDIAN_POINT"
+    if pivot_mode == "CURSOR" and scene is not None:
+        return scene.cursor.location.copy()
+
+    mode = getattr(context, "mode", "OBJECT")
+    if mode == "OBJECT":
+        sel = [o for o in (getattr(context, "selected_objects", ()) or ()) if o is not None]
+        if not sel:
+            return None
+        active = getattr(context, "active_object", None)
+        if pivot_mode == "ACTIVE_ELEMENT" and active in sel:
+            return active.matrix_world.translation.copy()
+        pts = [o.matrix_world.translation.copy() for o in sel]
+        if pivot_mode == "BOUNDING_BOX_CENTER":
+            lo = Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts)))
+            hi = Vector((max(p.x for p in pts), max(p.y for p in pts), max(p.z for p in pts)))
+            return (lo + hi) * 0.5
+        return sum(pts, Vector((0.0, 0.0, 0.0))) / len(pts)
+
+    if mode == "EDIT_MESH":
+        objs = [
+            o
+            for o in (getattr(context, "objects_in_mode_unique_data", None) or ())
+            if o is not None and o.type == "MESH" and o.data is not None
+        ]
+        if not objs:
+            eo = getattr(context, "edit_object", None) or getattr(context, "active_object", None)
+            if eo is not None and eo.type == "MESH" and eo.data is not None:
+                objs = [eo]
+        if not objs:
+            return None
+
+        if pivot_mode == "ACTIVE_ELEMENT":
+            active_obj = getattr(context, "edit_object", None) or objs[0]
+            bm_act = bmesh.from_edit_mesh(active_obj.data)
+            act_el = bm_act.select_history.active
+            if act_el is not None and act_el.is_valid:
+                mw = active_obj.matrix_world
+                if isinstance(act_el, bmesh.types.BMVert) and act_el.select and not act_el.hide:
+                    return mw @ act_el.co
+                if isinstance(act_el, bmesh.types.BMEdge) and act_el.select and not act_el.hide:
+                    return mw @ ((act_el.verts[0].co + act_el.verts[1].co) * 0.5)
+                if isinstance(act_el, bmesh.types.BMFace) and act_el.select and not act_el.hide:
+                    return mw @ act_el.calc_center_median()
+
+        pts: list[Vector] = []
+        for obj in objs:
+            bm = bmesh.from_edit_mesh(obj.data)
+            mw = obj.matrix_world
+            for v in bm.verts:
+                if v.select and not v.hide:
+                    pts.append(mw @ v.co)
+        if not pts:
+            return None
+        if pivot_mode == "BOUNDING_BOX_CENTER":
+            lo = Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts)))
+            hi = Vector((max(p.x for p in pts), max(p.y for p in pts), max(p.z for p in pts)))
+            return (lo + hi) * 0.5
+        return sum(pts, Vector((0.0, 0.0, 0.0))) / len(pts)
+
+    if not _has_selection(context):
+        return None
+    active = getattr(context, "active_object", None)
+    return active.matrix_world.translation.copy() if active is not None else None
+
+
+def _compute_gizmo_rotation(context) -> Matrix:
+    scene = getattr(context, "scene", None)
+    slots = getattr(scene, "transform_orientation_slots", None) if scene is not None else None
+    orient = slots[0].type if (slots and len(slots) > 0) else "GLOBAL"
+    active = getattr(context, "active_object", None)
+    if orient == "LOCAL" and active is not None:
+        return active.matrix_world.to_quaternion().to_matrix().to_4x4()
+    return Matrix.Identity(4)
+
+
+class VIEW3D_GT_maya_center_scale_cube(bpy.types.Gizmo):
+    """Center cube gizmo shape for Maya-style uniform Global Scale in Scale mode (R)."""
+
+    bl_idname = "VIEW3D_GT_maya_center_scale_cube"
+
+    def draw(self, context):
+        self.draw_preset_box(self.matrix_world)
+
+    def draw_select(self, context, select_id):
+        self.draw_preset_box(self.matrix_world, select_id=select_id)
+
+
+class VIEW3D_GGT_maya_center_scale(bpy.types.GizmoGroup):
+    """Displays Maya's central uniform Global Scale cube when Scale mode (R) is active."""
+
+    bl_idname = "VIEW3D_GGT_maya_center_scale"
+    bl_label = "Maya Center Global Scale Manipulator"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "WINDOW"
+    bl_options = {"3D", "PERSISTENT"}
+
+    @classmethod
+    def poll(cls, context):
+        space = _get_view3d_space(context)
+        if space is None or not space.show_gizmo or not space.show_gizmo_tool:
+            return False
+        return is_scale_tool_active(context) and _has_selection(context)
+
+    def _update_gizmo(self, context):
+        gz = getattr(self, "center_gz", None)
+        if gz is None:
+            return
+        pivot = compute_selection_pivot_world(context)
+        if pivot is None:
+            gz.hide = True
+            gz.hide_select = True
+            return
+        gz.hide = False
+        gz.hide_select = False
+        gz.matrix_basis = Matrix.Translation(pivot) @ _compute_gizmo_rotation(context)
+
+    def setup(self, context):
+        gz = self.gizmos.new(VIEW3D_GT_maya_center_scale_cube.bl_idname)
+        gz.color = (0.35, 0.88, 0.98)
+        gz.alpha = 0.85
+        gz.color_highlight = (1.0, 0.95, 0.15)
+        gz.alpha_highlight = 1.0
+        gz.use_draw_scale = True
+        gz.use_draw_modal = True
+        gz.scale_basis = 0.14
+        gz.select_bias = 12.0
+
+        op = gz.target_set_operator("transform.resize")
+        op.constraint_axis = (False, False, False)
+        op.orient_type = "GLOBAL"
+        op.release_confirm = True
+
+        self.center_gz = gz
+        self._update_gizmo(context)
+
+    def refresh(self, context):
+        self._update_gizmo(context)
+
+    def draw_prepare(self, context):
+        self._update_gizmo(context)
+
+
 CLASSES = (
     MAYA_UX_OT_set_tool,
     MAYA_UX_OT_gizmo_size,
@@ -931,6 +1093,8 @@ CLASSES = (
     MAYA_UX_OT_screen_nudge,
     MAYA_UX_OT_mmb_smart_drag,
     MAYA_UX_OT_set_mmb_axis,
+    VIEW3D_GT_maya_center_scale_cube,
+    VIEW3D_GGT_maya_center_scale,
 )
 
 

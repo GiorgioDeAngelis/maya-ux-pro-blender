@@ -894,6 +894,53 @@ def test_viewport_hide_bg_increment_save_and_cam_history():
     assert int(bpy.context.preferences.view.gizmo_size) == min(200, orig_gizmo_sz + 10)
     assert bpy.ops.maya_ux.gizmo_size(delta=-10) == {"FINISHED"}
     assert int(bpy.context.preferences.view.gizmo_size) == orig_gizmo_sz
+
+    # Maya Center Global Scale Gizmo in Scale mode (R)
+    assert "bl_rna" in ops_viewport.VIEW3D_GT_maya_center_scale_cube.__dict__
+    assert "bl_rna" in ops_viewport.VIEW3D_GGT_maya_center_scale.__dict__
+    cube_s = _reset_scene()
+    cube_s.location = Vector((2.0, 4.0, 6.0))
+    bpy.context.view_layer.update()
+    assert (ops_viewport.compute_selection_pivot_world(bpy.context) - Vector((2.0, 4.0, 6.0))).length < 1e-5
+
+    bpy.ops.mesh.primitive_cube_add(location=(6.0, 8.0, 10.0))
+    cube_s2 = bpy.context.active_object
+    cube_s.select_set(True)
+    cube_s2.select_set(True)
+    bpy.context.view_layer.update()
+    assert (ops_viewport.compute_selection_pivot_world(bpy.context) - Vector((4.0, 6.0, 8.0))).length < 1e-5
+
+    bpy.context.scene.tool_settings.transform_pivot_point = "CURSOR"
+    bpy.context.scene.cursor.location = Vector((1.0, 2.0, 3.0))
+    assert (ops_viewport.compute_selection_pivot_world(bpy.context) - Vector((1.0, 2.0, 3.0))).length < 1e-5
+    bpy.context.scene.tool_settings.transform_pivot_point = "MEDIAN_POINT"
+
+    assert bpy.ops.maya_ux.set_tool(tool_id="builtin.scale") == {"FINISHED"}
+    assert ops_viewport.VIEW3D_GGT_maya_center_scale.poll(bpy.context) is True
+    assert bpy.ops.maya_ux.set_tool(tool_id="builtin.move") == {"FINISHED"}
+    assert ops_viewport.VIEW3D_GGT_maya_center_scale.poll(bpy.context) is False
+
+    # Edit Mesh pivot computation & empty selection behavior
+    bpy.ops.maya_ux.set_tool(tool_id="builtin.scale")
+    bpy.ops.object.select_all(action="DESELECT")
+    cube_s.select_set(True)
+    bpy.context.view_layer.objects.active = cube_s
+    bpy.ops.object.mode_set(mode="EDIT")
+    bm_gs = bmesh.from_edit_mesh(cube_s.data)
+    bm_gs.verts.ensure_lookup_table()
+    for grp in (bm_gs.verts, bm_gs.edges, bm_gs.faces):
+        for el in grp:
+            el.select = False
+    bm_gs.select_flush_mode()
+    assert ops_viewport.compute_selection_pivot_world(bpy.context) is None
+    assert ops_viewport.VIEW3D_GGT_maya_center_scale.poll(bpy.context) is False
+    bm_gs.verts[0].select = True
+    bm_gs.select_flush_mode()
+    expected_v = cube_s.matrix_world @ bm_gs.verts[0].co
+    assert (ops_viewport.compute_selection_pivot_world(bpy.context) - expected_v).length < 1e-5
+    assert ops_viewport.VIEW3D_GGT_maya_center_scale.poll(bpy.context) is True
+    bpy.ops.object.mode_set(mode="OBJECT")
+
     print("[PASS] viewport_hide_bg_increment_save_and_cam_history")
 
 
@@ -1782,6 +1829,8 @@ def test_unregistration():
 
     maya_ux_pro.unregister()
     assert ops_extrude.is_extrude_session_active() is False
+    assert "bl_rna" not in ops_viewport.VIEW3D_GGT_maya_center_scale.__dict__
+    assert "bl_rna" not in ops_viewport.VIEW3D_GT_maya_center_scale_cube.__dict__
     assert ops_selection._SELECTED_VERT_DRAW_HANDLE is None
     assert ops_selection._on_component_display_depsgraph not in bpy.app.handlers.depsgraph_update_post
     assert len(ops_selection._SAVED_COMPONENT_COLORS) == 0

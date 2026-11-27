@@ -1,4 +1,4 @@
-# Maya UX Pro — Complete Hotkey Reference (`v2.7.1`)
+# Maya UX Pro — Complete Hotkey Reference (`v2.7.2`)
 
 > Press **`?`** (or **`F1`**) inside Blender's 3D Viewport at any time to open the live searchable **Hotkey Reference & Equivalence** dialog.
 
@@ -15,7 +15,7 @@
 | Track (Pan) | `MMB` (Empty / `Q`) · `⌥ + MMB` · `⌥ + ⇧ + Click` |
 | Dolly (Zoom, Maya inverted) | `⌥ + RMB` · `⌥ + ⌃ + Click` · `Trackpad Pinch` |
 | Virtual Transform (Global / Last Axis) | `MMB Drag` (Selected Object or Vert/Edge/Face + `W / E / R / T`) |
-| Select / Move / Rotate / Scale / Universal | `Q` / `W` / `E` / `R` / `T` |
+| Select / Move / Rotate / Scale / Extrude Multi-Gizmo | `Q` / `W` / `E` / `R` (center cube = Global Scale) / `⌘+E` |
 | Gizmo Size + / - | `⇧ + +` / `⇧ + -` (or `=` / `-` / `Numpad +` / `Numpad -`) |
 | Frame Selected / Frame All | `F` / `A` (`⇧+F` / `⇧+A` all 4 views) |
 | Tap Spacebar (Pane / Quad View) | `Space` tap (`< 0.20s` — maximizes hovered pane or Quad View with `Persp`) |
@@ -93,7 +93,7 @@
 |---|---|
 | Tumble / Track / Dolly | `Alt + LMB` / `MMB` (or `Alt + MMB`) / `Alt + RMB` |
 | Smart MMB Virtual Transform | `MMB Drag` (Selected Object or Vert/Edge/Face + `W / E / R / T`) |
-| Select / Move / Rotate / Scale / Universal | `Q` / `W` / `E` / `R` / `T` |
+| Select / Move / Rotate / Scale / Extrude Multi-Gizmo | `Q` / `W` / `E` / `R` (center cube = Global Scale) / `⌘+E` |
 | Frame Selected / Frame All | `F` / `A` (`Shift + F` / `Shift + A` all views) |
 | Tap Spacebar / Hold Spacebar | `Space` (Tap = Pane/Quad View, Hold = Hotbox) · `Shift + Space` Pie |
 | Expert Mode (Fullscreen Panels) | `Ctrl + Space` |
