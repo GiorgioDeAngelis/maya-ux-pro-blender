@@ -2,6 +2,14 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.5.9] - 2026-11-27
+### Added & Fixed
+- **Maya Edge Loop Pick Walk (`↑ / ↓ / ← / →` and `⇧ + ↑ / ↓` in Mesh Edge Mode)**:
+  - Pressing `→` (or `←`) with an edge selected selects the full Edge Loop (`mesh.select_edge_loop_multi` / `loop_multi_select`).
+  - Pressing `↓` or `↑` jumps step-by-step to the next parallel Edge Loop in opposite directions, deselecting the previous loop.
+  - Pressing `⇧ + ↓` or `⇧ + ↑` steps to the next parallel Edge Loop while keeping previously selected loops selected.
+- **Blender 5.3 Fix**: updated `VIEW3D_MT_maya_component_pie` to call `mesh.select_edge_loop_multi` (preserving Blender 4.2–5.2 `loop_multi_select` fallback).
+
 ## [2.5.8] - 2026-11-26
 ### Fixed
 - **Shrink (`<`) at 100% Mesh Selection (`ops_selection.py`)**: fixed Blender's no-op `mesh.select_less()` when all vertices, edges, or faces of a closed mesh or island are selected — `maya_ux.grow_shrink_selection` now steps back cleanly via the tracked Grow stack (`_GROW_HISTORY`) and peels open-mesh boundaries when starting from `Select All`.

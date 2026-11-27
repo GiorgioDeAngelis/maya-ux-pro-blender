@@ -36,7 +36,10 @@ class VIEW3D_MT_maya_component_pie(bpy.types.Menu):
 
         # NE: Edge Loop (Edit) or Object Shading & Frame Selected (Object)
         if context.mode == "EDIT_MESH":
-            pie.operator("mesh.loop_multi_select", text="Select Edge Loop", icon="EDGESEL").ring = False
+            if hasattr(bpy.ops.mesh, "select_edge_loop_multi"):
+                pie.operator("mesh.select_edge_loop_multi", text="Select Edge Loop", icon="EDGESEL")
+            else:
+                pie.operator("mesh.loop_multi_select", text="Select Edge Loop", icon="EDGESEL").ring = False
         else:
             col = pie.box().column(align=True)
             col.operator("object.shade_smooth", text="Shade Smooth", icon="SHADING_RENDERED")

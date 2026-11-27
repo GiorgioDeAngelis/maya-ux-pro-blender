@@ -6,11 +6,13 @@ import bmesh
 import bpy
 from bpy.props import BoolProperty, EnumProperty, FloatProperty
 from bpy_extras import view3d_utils
+from mathutils import Vector
 
 from .preferences import get_prefs
 
 _PREV_FACE_CENTER: dict[int, bool] = {}
 _GROW_HISTORY: dict[tuple, list[tuple[tuple, tuple]]] = {}
+_PICKWALK_STATE: dict[str, dict] = {}
 _MAX_GROW_HISTORY = 64
 
 
@@ -233,8 +235,183 @@ class MAYA_UX_OT_convert_selection(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _select_edge_loop_multi():
+    """Select full edge loops compatible with both Blender 5.3+ and 4.2-5.2."""
+    if hasattr(bpy.ops.mesh, "select_edge_loop_multi"):
+        return bpy.ops.mesh.select_edge_loop_multi()
+    return bpy.ops.mesh.loop_multi_select(ring=False)
+
+
+def compute_parallel_edge_loops(bm, frontier_indices: set[int]) -> list[frozenset[int]]:
+    """Return opposite parallel edge-loop index sets on each connected quad side of frontier_indices."""
+    bm.edges.ensure_lookup_table()
+    bm.faces.ensure_lookup_table()
+    frontier_edges = {bm.edges[i] for i in frontier_indices if 0 <= i < len(bm.edges)}
+    if not frontier_edges:
+        return []
+
+    quads = {f for e in frontier_edges for f in e.link_faces if not f.hide and len(f.verts) == 4}
+    visited = set()
+    sides: list[frozenset[int]] = []
+
+    for start_f in quads:
+        if start_f in visited:
+            continue
+        stack = [start_f]
+        comp = []
+        visited.add(start_f)
+        while stack:
+            f = stack.pop()
+            comp.append(f)
+            for e in f.edges:
+                if e in frontier_edges:
+                    continue
+                for nf in e.link_faces:
+                    if nf in quads and nf not in visited:
+                        visited.add(nf)
+                        stack.append(nf)
+        opp_indices = set()
+        for f in comp:
+            for lp in f.loops:
+                if lp.edge in frontier_edges:
+                    opp_e = lp.link_loop_next.link_loop_next.edge
+                    if not opp_e.hide:
+                        opp_indices.add(opp_e.index)
+        if opp_indices:
+            sides.append(frozenset(opp_indices))
+
+    return sides
+
+
+def _edge_group_world_center(bm, edge_indices: set[int] | frozenset[int], mat_world) -> Vector:
+    bm.edges.ensure_lookup_table()
+    total = Vector((0.0, 0.0, 0.0))
+    count = 0
+    for idx in edge_indices:
+        if 0 <= idx < len(bm.edges):
+            e = bm.edges[idx]
+            total += mat_world @ ((e.verts[0].co + e.verts[1].co) * 0.5)
+            count += 1
+    return (total / count) if count else Vector((0.0, 0.0, 0.0))
+
+
+def _rank_sides_for_direction(context, bm, mat_world, frontier: set[int], sides: list[frozenset[int]], direction: str) -> frozenset[int] | None:
+    if not sides:
+        return None
+    if len(sides) == 1:
+        return sides[0]
+
+    base_center = _edge_group_world_center(bm, frontier, mat_world)
+    region = getattr(context, "region", None)
+    rv3d = getattr(context, "region_data", None)
+    base_2d = view3d_utils.location_3d_to_region_2d(region, rv3d, base_center) if (region and rv3d) else None
+
+    def _score(side: frozenset[int]):
+        c3 = _edge_group_world_center(bm, side, mat_world)
+        if base_2d is not None:
+            c2 = view3d_utils.location_3d_to_region_2d(region, rv3d, c3)
+            if c2 is not None:
+                return (round(float(c2.y - base_2d.y), 4), round(float(c3.z - base_center.z), 5), round(float(c3.y - base_center.y), 5), round(float(c3.x - base_center.x), 5))
+        return (round(float(c3.z - base_center.z), 5), round(float(c3.y - base_center.y), 5), round(float(c3.x - base_center.x), 5))
+
+    return max(sides, key=_score) if direction == "UP" else min(sides, key=_score)
+
+
+def _pick_walk_edge_loop(context, obj: bpy.types.Object, direction: str, extend: bool) -> bool:
+    bm = bmesh.from_edit_mesh(obj.data)
+    bm.edges.ensure_lookup_table()
+    cur_sel = frozenset(e.index for e in bm.edges if e.select and not e.hide)
+    if not cur_sel:
+        return False
+
+    state = _PICKWALK_STATE.get(obj.name)
+    state_valid = (
+        state is not None
+        and state.get("edge_count") == len(bm.edges)
+        and state.get("all_selected") == cur_sel
+        and state.get("extend") == extend
+    )
+
+    opp_dir = "UP" if direction == "DOWN" else "DOWN"
+    target: frozenset[int] | None = None
+
+    if state_valid and extend:
+        ends = state.get("ends", {})
+        frontier, prev = ends.get(direction, (set(cur_sel), set()))
+        sides = compute_parallel_edge_loops(bm, set(frontier))
+        candidates = [s for s in sides if not (s & prev)]
+        if not candidates:
+            return False
+        target = candidates[0] if len(candidates) == 1 else _rank_sides_for_direction(context, bm, obj.matrix_world, set(frontier), candidates, direction)
+        if target is None:
+            return False
+        new_sel = frozenset(cur_sel | target)
+        ends[direction] = (target, set(frontier))
+        _PICKWALK_STATE[obj.name] = {
+            "edge_count": len(bm.edges),
+            "all_selected": new_sel,
+            "extend": True,
+            "ends": ends,
+        }
+    elif state_valid and not extend:
+        frontier = set(state["frontier"])
+        prev = set(state["prev_loop"])
+        sides = compute_parallel_edge_loops(bm, frontier)
+        if not sides:
+            return False
+        if direction == state["last_dir"]:
+            candidates = [s for s in sides if not (s & prev)]
+            if not candidates:
+                return False
+            target = candidates[0] if len(candidates) == 1 else _rank_sides_for_direction(context, bm, obj.matrix_world, frontier, candidates, direction)
+        else:
+            back_sides = [s for s in sides if s & prev]
+            target = back_sides[0] if back_sides else _rank_sides_for_direction(context, bm, obj.matrix_world, frontier, sides, direction)
+        if target is None:
+            return False
+        new_sel = target
+        _PICKWALK_STATE[obj.name] = {
+            "edge_count": len(bm.edges),
+            "all_selected": new_sel,
+            "extend": False,
+            "frontier": target,
+            "prev_loop": frozenset(frontier),
+            "last_dir": direction,
+        }
+    else:
+        sides = compute_parallel_edge_loops(bm, set(cur_sel))
+        if not sides:
+            return False
+        target = _rank_sides_for_direction(context, bm, obj.matrix_world, set(cur_sel), sides, direction)
+        if target is None:
+            return False
+        if extend:
+            new_sel = frozenset(cur_sel | target)
+            _PICKWALK_STATE[obj.name] = {
+                "edge_count": len(bm.edges),
+                "all_selected": new_sel,
+                "extend": True,
+                "ends": {
+                    direction: (target, set(cur_sel)),
+                    opp_dir: (cur_sel, set(target)),
+                },
+            }
+        else:
+            new_sel = target
+            _PICKWALK_STATE[obj.name] = {
+                "edge_count": len(bm.edges),
+                "all_selected": new_sel,
+                "extend": False,
+                "frontier": target,
+                "prev_loop": cur_sel,
+                "last_dir": direction,
+            }
+
+    return _restore_edit_mesh_selection([obj], "edges", ((obj.name, len(bm.edges), new_sel),))
+
+
 class MAYA_UX_OT_pick_walk(bpy.types.Operator):
-    """Navigate hierarchy Parent/Child/Siblings like Maya Pick Walk (Arrow keys)."""
+    """Maya Pick Walk: hierarchy navigation in Object Mode and Edge Loop stepping in Edit Mesh."""
 
     bl_idname = "maya_ux.pick_walk"
     bl_label = "Maya Pick Walk"
@@ -243,18 +420,36 @@ class MAYA_UX_OT_pick_walk(bpy.types.Operator):
     direction: EnumProperty(
         name="Direction",
         items=[
-            ("UP", "Parent (Up)", "Select parent object"),
-            ("DOWN", "Child (Down)", "Select first child object"),
-            ("LEFT", "Prev Sibling (Left)", "Select previous sibling"),
-            ("RIGHT", "Next Sibling (Right)", "Select next sibling"),
+            ("UP", "Up / Prev Loop", "Select parent object or step parallel edge loop up"),
+            ("DOWN", "Down / Next Loop", "Select first child object or step parallel edge loop down"),
+            ("LEFT", "Prev / Edge Loop", "Select previous sibling or full edge loop"),
+            ("RIGHT", "Next / Edge Loop", "Select next sibling or full edge loop"),
         ],
         default="UP",
+    )
+    extend: BoolProperty(
+        name="Extend Selection",
+        description="Keep previously selected edge loops when walking with Shift+Up/Down",
+        default=False,
     )
 
     def execute(self, context):
         active = context.active_object
         if active is None:
             return {"CANCELLED"}
+
+        if context.mode == "EDIT_MESH":
+            if active.type != "MESH" or not bool(context.tool_settings.mesh_select_mode[1]):
+                return {"PASS_THROUGH"}
+            bm = bmesh.from_edit_mesh(active.data)
+            if not any(e.select and not e.hide for e in bm.edges):
+                return {"CANCELLED"}
+            if self.direction in {"RIGHT", "LEFT"}:
+                _select_edge_loop_multi()
+                _PICKWALK_STATE.pop(active.name, None)
+                return {"FINISHED"}
+            _pick_walk_edge_loop(context, active, self.direction, self.extend)
+            return {"FINISHED"}
 
         if context.mode != "OBJECT":
             return {"PASS_THROUGH"}
@@ -564,5 +759,6 @@ def unregister():
     sync_face_center_overlay(False)
     _PREV_FACE_CENTER.clear()
     _GROW_HISTORY.clear()
+    _PICKWALK_STATE.clear()
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)

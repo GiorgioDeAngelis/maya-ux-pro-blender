@@ -481,7 +481,15 @@ def register_keymaps():
                     ("LEFT_ARROW", "LEFT"),
                     ("RIGHT_ARROW", "RIGHT"),
                 ):
-                    _add_kmi(km, "maya_ux.pick_walk", key, props={"direction": direction})
+                    _add_kmi(km, "maya_ux.pick_walk", key, props={"direction": direction, "extend": False})
+            for sh in (False, True):
+                for key, direction in (
+                    ("UP_ARROW", "UP"),
+                    ("DOWN_ARROW", "DOWN"),
+                    ("LEFT_ARROW", "LEFT"),
+                    ("RIGHT_ARROW", "RIGHT"),
+                ):
+                    _add_kmi(km_mesh, "maya_ux.pick_walk", key, shift=sh, repeat=False, props={"direction": direction, "extend": sh})
 
     # 7. Maya Modeling & Duplication
     if prefs.enable_modeling_keys:

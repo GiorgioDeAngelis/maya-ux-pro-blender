@@ -606,6 +606,89 @@ def test_selection_pickwalk_soft_and_delete():
             actual_shrink_seq.append(sum(1 for el in getattr(bmesh.from_edit_mesh(closed_cube.data), attr) if el.select))
         assert tuple(actual_shrink_seq) == expected_shrink_seq, f"{attr}: expected {expected_shrink_seq}, got {actual_shrink_seq}"
     bpy.ops.object.mode_set(mode="OBJECT")
+
+    # Edge Loop Pick Walk in Mesh Edge Mode (RIGHT/LEFT loop, DOWN/UP jump loop, Shift+DOWN/UP extend loops)
+    mesh_pw_kmis = {
+        (kmi.type, bool(kmi.shift), kmi.properties.direction, bool(kmi.properties.extend), int(kmi.repeat))
+        for km, kmi in keymap.addon_keymaps
+        if km.name == "Mesh" and kmi.idname == "maya_ux.pick_walk"
+    }
+    for key_t, dir_name in (("UP_ARROW", "UP"), ("DOWN_ARROW", "DOWN"), ("LEFT_ARROW", "LEFT"), ("RIGHT_ARROW", "RIGHT")):
+        assert (key_t, False, dir_name, False, 0) in mesh_pw_kmis
+        assert (key_t, True, dir_name, True, 0) in mesh_pw_kmis
+
+    # 5x5 grid: horizontal interior loops -> RIGHT selects full loop (5), DOWN jumps, UP jumps back, Shift+DOWN/UP extends
+    _reset_scene()
+    ts = bpy.context.scene.tool_settings
+    bpy.ops.object.select_all(action="DESELECT")
+    bpy.ops.mesh.primitive_grid_add(x_subdivisions=5, y_subdivisions=5)
+    pw_grid = bpy.context.active_object
+    bpy.ops.object.mode_set(mode="EDIT")
+    ts.mesh_select_mode = (False, True, False)
+    ops_selection._PICKWALK_STATE.clear()
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bm_pw = bmesh.from_edit_mesh(pw_grid.data)
+    bm_pw.edges.ensure_lookup_table()
+    # Select 1 center horizontal edge at y=0
+    start_edge = min(
+        (e for e in bm_pw.edges if not e.is_boundary and abs(e.verts[0].co.y - e.verts[1].co.y) < 1e-4),
+        key=lambda e: abs((e.verts[0].co.y + e.verts[1].co.y) * 0.5) + abs((e.verts[0].co.x + e.verts[1].co.x) * 0.5),
+    )
+    start_edge.select_set(True)
+    bmesh.update_edit_mesh(pw_grid.data)
+
+    assert bpy.ops.maya_ux.pick_walk(direction="RIGHT", extend=False) == {"FINISHED"}
+    loop0 = {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select}
+    assert len(loop0) == 5
+
+    assert bpy.ops.maya_ux.pick_walk(direction="DOWN", extend=False) == {"FINISHED"}
+    loop1 = {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select}
+    assert len(loop1) == 5 and loop1.isdisjoint(loop0)
+
+    assert bpy.ops.maya_ux.pick_walk(direction="DOWN", extend=False) == {"FINISHED"}
+    loop2 = {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select}
+    assert len(loop2) == 5 and loop2.isdisjoint(loop1) and loop2.isdisjoint(loop0)
+
+    assert bpy.ops.maya_ux.pick_walk(direction="UP", extend=False) == {"FINISHED"}
+    assert {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select} == loop1
+
+    assert bpy.ops.maya_ux.pick_walk(direction="DOWN", extend=True) == {"FINISHED"}
+    ext1 = {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select}
+    assert ext1 == (loop1 | loop2) and len(ext1) == 10
+
+    assert bpy.ops.maya_ux.pick_walk(direction="UP", extend=True) == {"FINISHED"}
+    ext2 = {e.index for e in bmesh.from_edit_mesh(pw_grid.data).edges if e.select}
+    assert ext2 == (loop0 | loop1 | loop2) and len(ext2) == 15
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    # Closed Cylinder: step across circular rings cleanly without side flip
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    ts = bpy.context.scene.tool_settings
+    bpy.ops.mesh.primitive_cylinder_add(vertices=12, end_fill_type="NOTHING")
+    cyl = bpy.context.active_object
+    bpy.ops.object.mode_set(mode="EDIT")
+    ts.mesh_select_mode = (False, True, False)
+    ops_selection._PICKWALK_STATE.clear()
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bm_cyl = bmesh.from_edit_mesh(cyl.data)
+    vert_edges = [e for e in bm_cyl.edges if abs(e.verts[0].co.z - e.verts[1].co.z) > 0.5]
+    bmesh.ops.subdivide_edges(bm_cyl, edges=vert_edges, cuts=3, use_grid_fill=False)
+    bmesh.update_edit_mesh(cyl.data)
+    bm_cyl = bmesh.from_edit_mesh(cyl.data)
+    bm_cyl.edges.ensure_lookup_table()
+    # Select 1 edge on middle ring (z ≈ 0.0)
+    mid_edge = next(e for e in bm_cyl.edges if abs(e.verts[0].co.z) < 0.1 and abs(e.verts[1].co.z) < 0.1)
+    mid_edge.select_set(True)
+    bmesh.update_edit_mesh(cyl.data)
+    assert bpy.ops.maya_ux.pick_walk(direction="RIGHT", extend=False) == {"FINISHED"}
+    ring0 = {e.index for e in bmesh.from_edit_mesh(cyl.data).edges if e.select}
+    assert len(ring0) == 12
+    assert bpy.ops.maya_ux.pick_walk(direction="DOWN", extend=False) == {"FINISHED"}
+    ring1 = {e.index for e in bmesh.from_edit_mesh(cyl.data).edges if e.select}
+    assert len(ring1) == 12 and ring1.isdisjoint(ring0)
+    assert bpy.ops.maya_ux.pick_walk(direction="UP", extend=True) == {"FINISHED"}
+    assert {e.index for e in bmesh.from_edit_mesh(cyl.data).edges if e.select} == (ring0 | ring1)
+    bpy.ops.object.mode_set(mode="OBJECT")
     print("[PASS] selection_pickwalk_soft_and_delete")
 
 
@@ -1277,6 +1360,7 @@ def test_unregistration():
 
     maya_ux_pro.unregister()
     assert len(ops_selection._GROW_HISTORY) == 0
+    assert len(ops_selection._PICKWALK_STATE) == 0
     assert ui_poly_hud._HUD_HANDLE is None
     assert ui_poly_hud._on_depsgraph_update not in bpy.app.handlers.depsgraph_update_post
     assert ops_startup._on_load_post not in bpy.app.handlers.load_post
