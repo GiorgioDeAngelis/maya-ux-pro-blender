@@ -1321,8 +1321,201 @@ def _compute_extrude_manipulator_matrix(context) -> tuple[Vector | None, Matrix]
     return pivot, _orthonormal_basis_from_z(world_z).to_4x4()
 
 
+_EXTRUDE_DRAG_AXES = {
+    "AUTO_Z": Vector((0.0, 0.0, 1.0)),
+    "THICKNESS": Vector((0.0, 0.0, 1.0)),
+    "MOVE_X": Vector((1.0, 0.0, 0.0)),
+    "MOVE_Y": Vector((0.0, 1.0, 0.0)),
+    "SCALE_X": Vector((1.0, 0.0, 0.0)),
+    "SCALE_Y": Vector((0.0, 1.0, 0.0)),
+    "SCALE_Z": Vector((0.0, 0.0, 1.0)),
+}
+_EXTRUDE_DRAG_SCALE_MODES = {"UNIFORM_SCALE", "SCALE_X", "SCALE_Y", "SCALE_Z"}
+_EXTRUDE_DRAG_LABELS = {
+    "AUTO_Z": "Thickness / Local Z",
+    "THICKNESS": "Thickness",
+    "MOVE_X": "Local Translate X",
+    "MOVE_Y": "Local Translate Y",
+    "UNIFORM_SCALE": "Uniform Scale",
+    "SCALE_X": "Local Scale X",
+    "SCALE_Y": "Local Scale Y",
+    "SCALE_Z": "Local Scale Z",
+    "OFFSET": "Offset",
+    "TWIST": "Twist",
+}
+
+
+def _region_and_rv3d(context):
+    """Return (region, rv3d) of the 3D viewport window region, or (None, None) headless."""
+    region = getattr(context, "region", None)
+    rv3d = getattr(context, "region_data", None)
+    if region is None or rv3d is None or getattr(region, "type", "") != "WINDOW":
+        space = getattr(context, "space_data", None)
+        area = getattr(context, "area", None)
+        if space is not None and getattr(space, "type", "") == "VIEW_3D" and area is not None:
+            rv3d = space.region_3d
+            region = next((r for r in area.regions if r.type == "WINDOW"), None)
+    if region is None or rv3d is None:
+        return None, None
+    return region, rv3d
+
+
+def begin_extrude_drag(context, mode: str, mouse_x: float, mouse_y: float) -> dict | None:
+    """Start an interactive Maya Extrude handle drag: snapshot geometry and screen-space mapping."""
+    if getattr(context, "mode", "") != "EDIT_MESH":
+        return None
+    obj = getattr(context, "edit_object", None) or getattr(context, "active_object", None)
+    if obj is None or obj.type != "MESH" or obj.data is None:
+        return None
+    bm = bmesh.from_edit_mesh(obj.data)
+    comp_mode = detect_extrude_component(context, bm)
+    if not comp_mode:
+        return None
+
+    space = getattr(context.scene, "maya_ux_extrude_space", "LOCAL")
+    keep = bool(getattr(context.scene, "maya_ux_keep_faces_together", True))
+    snapshot = snapshot_extrude_drag(bm, obj, comp_mode, space, keep)
+    if not snapshot:
+        return None
+
+    state = {
+        "obj": obj,
+        "mode": mode,
+        "comp_mode": comp_mode,
+        "space": space,
+        "keep": keep,
+        "snapshot": snapshot,
+        "start": Vector((float(mouse_x), float(mouse_y))),
+        "pivot_2d": None,
+        "screen_dir": None,
+        "units_per_px": 0.01,
+        "twist_sign": 1.0,
+        "amount": 0.0,
+    }
+
+    region, rv3d = _region_and_rv3d(context)
+    pivot, rot4 = _compute_extrude_manipulator_matrix(context)
+    if region is None or rv3d is None or pivot is None:
+        return state
+
+    p0 = view3d_utils.location_3d_to_region_2d(region, rv3d, pivot)
+    if p0 is None:
+        return state
+    state["pivot_2d"] = p0
+    rot3 = rot4.to_3x3()
+
+    right_w = (rv3d.view_rotation @ Vector((1.0, 0.0, 0.0))).normalized()
+    p_right = view3d_utils.location_3d_to_region_2d(region, rv3d, pivot + right_w)
+    if p_right is not None and (p_right - p0).length > 1e-4:
+        state["units_per_px"] = 1.0 / (p_right - p0).length
+
+    axis = _EXTRUDE_DRAG_AXES.get(mode)
+    if axis is not None:
+        w_axis = (rot3 @ axis).normalized()
+        p1 = view3d_utils.location_3d_to_region_2d(region, rv3d, pivot + w_axis)
+        if p1 is not None and (p1 - p0).length > 2.0:
+            state["screen_dir"] = (p1 - p0).normalized()
+            if mode not in _EXTRUDE_DRAG_SCALE_MODES:
+                # World units per pixel measured along the handle axis itself (drag sticks to the cursor)
+                state["units_per_px"] = 1.0 / (p1 - p0).length
+
+    view_dir = (rv3d.view_rotation @ Vector((0.0, 0.0, -1.0))).normalized()
+    z_world = (rot3 @ Vector((0.0, 0.0, 1.0))).normalized()
+    state["twist_sign"] = 1.0 if z_world.dot(view_dir) <= 0.0 else -1.0
+    return state
+
+
+def compute_extrude_drag_amount(state: dict, mouse_x: float, mouse_y: float, precise: bool = False, snap: bool = False) -> float:
+    """Map the current mouse position to a handle amount (distance, scale factor delta or twist angle)."""
+    mode = state["mode"]
+    cur = Vector((float(mouse_x), float(mouse_y)))
+    start = state["start"]
+    delta = cur - start
+    p0 = state.get("pivot_2d")
+    sdir = state.get("screen_dir")
+
+    if mode == "TWIST":
+        amount = None
+        if p0 is not None:
+            a = start - p0
+            b = cur - p0
+            if a.length > 6.0 and b.length > 6.0:
+                amount = math.atan2(a.x * b.y - a.y * b.x, a.dot(b)) * state.get("twist_sign", 1.0)
+        if amount is None:
+            amount = (delta.x + delta.y * 0.5) * 0.015
+    elif mode in _EXTRUDE_DRAG_SCALE_MODES:
+        amount = None
+        if p0 is not None:
+            if mode == "UNIFORM_SCALE" or sdir is None:
+                d0 = (start - p0).length
+                d1 = (cur - p0).length
+            else:
+                d0 = (start - p0).dot(sdir)
+                d1 = (cur - p0).dot(sdir)
+            if abs(d0) > 12.0:
+                amount = d1 / d0 - 1.0
+        if amount is None:
+            px = delta.dot(sdir) if sdir is not None else (delta.x + delta.y * 0.5)
+            amount = px * 0.006
+    else:
+        px = delta.dot(sdir) if sdir is not None else (delta.x + delta.y)
+        amount = px * state.get("units_per_px", 0.01)
+
+    if precise:
+        amount *= 0.1
+    if snap:
+        step = math.radians(15.0) if mode == "TWIST" else 0.1
+        amount = round(amount / step) * step
+    if mode in _EXTRUDE_DRAG_SCALE_MODES:
+        amount = max(-0.99, amount)
+    return amount
+
+
+def update_extrude_drag(state: dict, mouse_x: float, mouse_y: float, precise: bool = False, snap: bool = False) -> float:
+    """Apply the drag amount for the given mouse position to the live edit mesh."""
+    amount = compute_extrude_drag_amount(state, mouse_x, mouse_y, precise=precise, snap=snap)
+    set_extrude_drag_amount(state, amount)
+    return amount
+
+
+def set_extrude_drag_amount(state: dict, amount: float) -> None:
+    """Deform the snapshotted geometry by an absolute handle amount (0.0 restores it)."""
+    obj = state["obj"]
+    bm = bmesh.from_edit_mesh(obj.data)
+    apply_extrude_drag_delta(
+        bm,
+        obj,
+        state["comp_mode"],
+        state["space"],
+        state["keep"],
+        state["mode"],
+        amount,
+        snapshot=state["snapshot"],
+    )
+    bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=False)
+    state["amount"] = amount
+
+
+def _extrude_drag_header(context, state: dict | None) -> None:
+    area = getattr(context, "area", None)
+    if area is None:
+        return
+    if state is None:
+        area.header_text_set(None)
+        return
+    mode = state["mode"]
+    amount = state.get("amount", 0.0)
+    if mode == "TWIST":
+        txt = f"{math.degrees(amount):.1f}°"
+    elif mode in _EXTRUDE_DRAG_SCALE_MODES:
+        txt = f"{1.0 + amount:.3f}"
+    else:
+        txt = f"{amount:.4f}"
+    area.header_text_set(f"Maya Extrude  {_EXTRUDE_DRAG_LABELS.get(mode, mode)}: {txt}   (⇧ precise · ⌃ snap · RMB/Esc cancel)")
+
+
 class MAYA_UX_OT_extrude_drag_handle(bpy.types.Operator):
-    """Interactive drag handler for Maya Extrude Show Manipulator (Normal Push / Uniform Scale / Twist)."""
+    """Interactive drag for a Maya Extrude handle (fallback operator; the manipulator drags natively)."""
 
     bl_idname = "maya_ux.extrude_drag_handle"
     bl_label = "Maya Extrude Drag Handle"
@@ -1345,126 +1538,28 @@ class MAYA_UX_OT_extrude_drag_handle(bpy.types.Operator):
         default="AUTO_Z",
     )
 
-    _obj = None
-    _comp_mode: str = "FACE"
-    _space: str = "LOCAL"
-    _keep: bool = True
-    _snapshot = None
-    _start_mouse: tuple[float, float] = (0.0, 0.0)
-    _screen_dir: Vector | None = None
-    _world_per_px: float = 0.01
-
     def invoke(self, context, event):
-        if getattr(context, "mode", "") != "EDIT_MESH":
+        self._state = begin_extrude_drag(context, self.mode, event.mouse_region_x, event.mouse_region_y)
+        if self._state is None:
             return {"CANCELLED"}
-        obj = getattr(context, "edit_object", None) or getattr(context, "active_object", None)
-        if obj is None or obj.type != "MESH" or obj.data is None:
-            return {"CANCELLED"}
-
-        bm = bmesh.from_edit_mesh(obj.data)
-        comp_mode = detect_extrude_component(context, bm)
-        if not comp_mode:
-            return {"CANCELLED"}
-
-        self._obj = obj
-        self._comp_mode = comp_mode
-        self._space = getattr(context.scene, "maya_ux_extrude_space", "LOCAL")
-        self._keep = bool(getattr(context.scene, "maya_ux_keep_faces_together", True))
-        self._snapshot = snapshot_extrude_drag(bm, obj, comp_mode, self._space, self._keep)
-        self._start_mouse = (float(event.mouse_region_x), float(event.mouse_region_y))
-
-        region = getattr(context, "region", None)
-        rv3d = getattr(context, "region_data", None)
-        pivot, rot4 = _compute_extrude_manipulator_matrix(context)
-        axis_map = {
-            "AUTO_Z": Vector((0, 0, 1)),
-            "THICKNESS": Vector((0, 0, 1)),
-            "MOVE_X": Vector((1, 0, 0)),
-            "MOVE_Y": Vector((0, 1, 0)),
-            "SCALE_X": Vector((1, 0, 0)),
-            "SCALE_Y": Vector((0, 1, 0)),
-            "SCALE_Z": Vector((0, 0, 1)),
-        }
-        self._screen_dir = None
-        self._world_per_px = 0.01
-
-        if region is not None and rv3d is not None and pivot is not None:
-            p0 = view3d_utils.location_3d_to_region_2d(region, rv3d, pivot)
-            view_dir = (rv3d.view_rotation @ Vector((0, 0, -1))).normalized()
-            if p0 is not None:
-                # Estimate pixels per world unit around pivot
-                right_w = (rv3d.view_rotation @ Vector((1, 0, 0))).normalized()
-                p_right = view3d_utils.location_3d_to_region_2d(region, rv3d, pivot + right_w)
-                if p_right is not None and (p_right - p0).length > 1e-4:
-                    self._world_per_px = 1.0 / (p_right - p0).length
-                if self.mode in axis_map:
-                    w_axis = (rot4.to_3x3() @ axis_map[self.mode]).normalized()
-                    p1 = view3d_utils.location_3d_to_region_2d(region, rv3d, pivot + w_axis)
-                    if p1 is not None and (p1 - p0).length > 2.0:
-                        self._screen_dir = (p1 - p0).normalized()
-            elif view_dir.length > 0:
-                self._world_per_px = max(0.002, (rv3d.view_distance * 0.002))
-
         context.window_manager.modal_handler_add(self)
         return {"RUNNING_MODAL"}
 
     def modal(self, context, event):
-        if event.type == "MOUSEMOVE":
-            dx = float(event.mouse_region_x) - self._start_mouse[0]
-            dy = float(event.mouse_region_y) - self._start_mouse[1]
-            if self._screen_dir is not None and self.mode in {"AUTO_Z", "THICKNESS", "MOVE_X", "MOVE_Y", "SCALE_X", "SCALE_Y", "SCALE_Z"}:
-                px_delta = Vector((dx, dy)).dot(self._screen_dir)
-            else:
-                px_delta = dx + dy * 0.5
-
-            if event.shift:
-                px_delta *= 0.2
-
-            if self.mode in {"UNIFORM_SCALE", "SCALE_X", "SCALE_Y", "SCALE_Z"}:
-                amount = px_delta * 0.006
-            elif self.mode == "TWIST":
-                amount = px_delta * 0.015
-            else:
-                amount = px_delta * self._world_per_px
-
-            bm = bmesh.from_edit_mesh(self._obj.data)
-            apply_extrude_drag_delta(
-                bm,
-                self._obj,
-                self._comp_mode,
-                self._space,
-                self._keep,
-                self.mode,
-                amount,
-                snapshot=self._snapshot,
-            )
-            bmesh.update_edit_mesh(self._obj.data, loop_triangles=True, destructive=False)
-            if context.area is not None:
-                context.area.tag_redraw()
+        state = self._state
+        if event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}:
+            update_extrude_drag(state, event.mouse_region_x, event.mouse_region_y, precise=event.shift, snap=event.ctrl)
+            _extrude_drag_header(context, state)
             return {"RUNNING_MODAL"}
-
         if (event.type == "LEFTMOUSE" and event.value == "RELEASE") or (
             event.type in {"RET", "NUMPAD_ENTER"} and event.value == "PRESS"
         ):
+            _extrude_drag_header(context, None)
             return {"FINISHED"}
-
         if event.type in {"RIGHTMOUSE", "ESC"} and event.value == "PRESS":
-            bm = bmesh.from_edit_mesh(self._obj.data)
-            apply_extrude_drag_delta(
-                bm,
-                self._obj,
-                self._comp_mode,
-                self._space,
-                self._keep,
-                self.mode,
-                0.0,
-                snapshot=self._snapshot,
-            )
-            bmesh.update_edit_mesh(self._obj.data, loop_triangles=True, destructive=False)
-            if context.area is not None:
-                context.area.tag_redraw()
+            set_extrude_drag_amount(state, 0.0)
+            _extrude_drag_header(context, None)
             return {"CANCELLED"}
-
         return {"RUNNING_MODAL"}
 
 
@@ -1518,10 +1613,61 @@ class MAYA_UX_OT_cleanup_extrude(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _gizmo_drag_invoke(self, context, event):
+    """Native Gizmo invoke: start dragging this handle (Blender gizmo tweak loop delivers modal events)."""
+    state = begin_extrude_drag(context, getattr(self, "drag_mode", "AUTO_Z"), event.mouse_region_x, event.mouse_region_y)
+    if state is None:
+        return {"CANCELLED"}
+    self.drag_state = state
+    _extrude_drag_header(context, state)
+    return {"RUNNING_MODAL"}
+
+
+def _gizmo_drag_modal(self, context, event, tweak):
+    """Native Gizmo modal: deform the extruded components while the mouse moves."""
+    state = getattr(self, "drag_state", None)
+    if state is None:
+        return {"CANCELLED"}
+    update_extrude_drag(
+        state,
+        event.mouse_region_x,
+        event.mouse_region_y,
+        precise="PRECISE" in tweak,
+        snap="SNAP" in tweak,
+    )
+    _extrude_drag_header(context, state)
+    if context.area is not None:
+        context.area.tag_redraw()
+    return {"RUNNING_MODAL"}
+
+
+def _gizmo_drag_exit(self, context, cancel):
+    """Native Gizmo exit: restore on cancel, otherwise push an undo step."""
+    state = getattr(self, "drag_state", None)
+    self.drag_state = None
+    _extrude_drag_header(context, None)
+    if state is None:
+        return
+    if cancel:
+        set_extrude_drag_amount(state, 0.0)
+    elif abs(state.get("amount", 0.0)) > 1e-9:
+        try:
+            bpy.ops.ed.undo_push(message=f"Maya Extrude {_EXTRUDE_DRAG_LABELS.get(state['mode'], 'Handle')}")
+        except (RuntimeError, TypeError):
+            pass
+    if context.area is not None:
+        context.area.tag_redraw()
+
+
 class VIEW3D_GT_maya_extrude_arrow(bpy.types.Gizmo):
-    """Arrow gizmo handle for Maya Extrude Show Manipulator."""
+    """Arrow gizmo handle for Maya Extrude Show Manipulator (native drag)."""
 
     bl_idname = "VIEW3D_GT_maya_extrude_arrow"
+    __slots__ = ("drag_mode", "drag_state")
+
+    invoke = _gizmo_drag_invoke
+    modal = _gizmo_drag_modal
+    exit = _gizmo_drag_exit
 
     def draw(self, context):
         self.draw_preset_arrow(self.matrix_world, axis="POS_Z")
@@ -1531,9 +1677,14 @@ class VIEW3D_GT_maya_extrude_arrow(bpy.types.Gizmo):
 
 
 class VIEW3D_GT_maya_extrude_box(bpy.types.Gizmo):
-    """Cube handle for Maya Extrude Uniform Scale & Axis Scale."""
+    """Cube handle for Maya Extrude Uniform Scale & Axis Scale (native drag)."""
 
     bl_idname = "VIEW3D_GT_maya_extrude_box"
+    __slots__ = ("drag_mode", "drag_state")
+
+    invoke = _gizmo_drag_invoke
+    modal = _gizmo_drag_modal
+    exit = _gizmo_drag_exit
 
     def draw(self, context):
         self.draw_preset_box(self.matrix_world @ Matrix.Scale(0.11, 4))
@@ -1543,9 +1694,26 @@ class VIEW3D_GT_maya_extrude_box(bpy.types.Gizmo):
 
 
 class VIEW3D_GT_maya_extrude_ring(bpy.types.Gizmo):
-    """Ring handle for Maya Extrude Twist / Local-World toggle."""
+    """Ring handle for Maya Extrude Twist (native drag)."""
 
     bl_idname = "VIEW3D_GT_maya_extrude_ring"
+    __slots__ = ("drag_mode", "drag_state")
+
+    invoke = _gizmo_drag_invoke
+    modal = _gizmo_drag_modal
+    exit = _gizmo_drag_exit
+
+    def draw(self, context):
+        self.draw_preset_circle(self.matrix_world, axis="POS_Z")
+
+    def draw_select(self, context, select_id):
+        self.draw_preset_circle(self.matrix_world, axis="POS_Z", select_id=select_id)
+
+
+class VIEW3D_GT_maya_extrude_button(bpy.types.Gizmo):
+    """Small clickable ring button (Local ↔ World toggle) — runs its target operator on click."""
+
+    bl_idname = "VIEW3D_GT_maya_extrude_button"
 
     def draw(self, context):
         self.draw_preset_circle(self.matrix_world, axis="POS_Z")
@@ -1586,8 +1754,8 @@ class VIEW3D_GGT_maya_extrude(bpy.types.GizmoGroup):
         gz.scale_basis = 1.0
         gz.line_width = 2.5
         gz.matrix_offset = offset_rot
-        op = gz.target_set_operator("maya_ux.extrude_drag_handle")
-        op.mode = drag_mode
+        gz.drag_mode = drag_mode
+        gz.drag_state = None
         return gz
 
     def _new_box(self, color, drag_mode: str, offset_pos: tuple[float, float, float], scale_mult: float = 1.0, bias: float = 0.0):
@@ -1602,8 +1770,8 @@ class VIEW3D_GGT_maya_extrude(bpy.types.GizmoGroup):
         gz.scale_basis = 1.0
         gz.select_bias = bias
         gz.matrix_offset = Matrix.Translation(offset_pos) @ Matrix.Scale(scale_mult, 4)
-        op = gz.target_set_operator("maya_ux.extrude_drag_handle")
-        op.mode = drag_mode
+        gz.drag_mode = drag_mode
+        gz.drag_state = None
         return gz
 
     def setup(self, context):
@@ -1626,10 +1794,11 @@ class VIEW3D_GGT_maya_extrude(bpy.types.GizmoGroup):
         gz_twist.scale_basis = 1.0
         gz_twist.line_width = 1.5
         gz_twist.matrix_offset = Matrix.Scale(0.75, 4)
-        gz_twist.target_set_operator("maya_ux.extrude_drag_handle").mode = "TWIST"
+        gz_twist.drag_mode = "TWIST"
+        gz_twist.drag_state = None
         self.gz_twist = gz_twist
 
-        gz_sw = self.gizmos.new(VIEW3D_GT_maya_extrude_ring.bl_idname)
+        gz_sw = self.gizmos.new(VIEW3D_GT_maya_extrude_button.bl_idname)
         gz_sw.color = (0.35, 0.88, 0.98)
         gz_sw.alpha = 0.95
         gz_sw.color_highlight = (1.0, 0.95, 0.15)
@@ -1702,6 +1871,7 @@ CLASSES = (
     VIEW3D_GT_maya_extrude_arrow,
     VIEW3D_GT_maya_extrude_box,
     VIEW3D_GT_maya_extrude_ring,
+    VIEW3D_GT_maya_extrude_button,
     VIEW3D_GGT_maya_extrude,
 )
 

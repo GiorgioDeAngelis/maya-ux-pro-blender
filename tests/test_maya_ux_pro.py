@@ -1893,6 +1893,46 @@ def test_maya_extrude_pro():
     assert abs(max(xs_sc) - 1.5) < 1e-4 and abs(min(xs_sc) + 1.5) < 1e-4
     assert all(f.calc_area() < 1.5 for f in bm_sc_check.faces if f.select)
 
+    # v2.8.1: handles drag natively via Gizmo invoke/modal/exit (no dead target operator)
+    for gz_cls in (ops_extrude.VIEW3D_GT_maya_extrude_arrow, ops_extrude.VIEW3D_GT_maya_extrude_box, ops_extrude.VIEW3D_GT_maya_extrude_ring):
+        assert callable(gz_cls.__dict__.get("invoke")) and callable(gz_cls.__dict__.get("modal")) and callable(gz_cls.__dict__.get("exit"))
+    assert "invoke" not in ops_extrude.VIEW3D_GT_maya_extrude_button.__dict__
+    assert "bl_rna" in ops_extrude.VIEW3D_GT_maya_extrude_button.__dict__
+
+    bm_live = bmesh.from_edit_mesh(cube_opp.data)
+    sel_before = {v.index: v.co.copy() for v in bm_live.verts if v.select}
+    state = ops_extrude.begin_extrude_drag(bpy.context, "AUTO_Z", 0.0, 0.0)
+    assert state is not None and state["snapshot"]
+    amt = ops_extrude.update_extrude_drag(state, 50.0, 0.0)
+    assert abs(amt - 0.5) < 1e-6
+    bm_live = bmesh.from_edit_mesh(cube_opp.data)
+    bm_live.verts.ensure_lookup_table()
+    moved = max((bm_live.verts[i].co - co).length for i, co in sel_before.items())
+    assert abs(moved - 0.5) < 1e-4
+    ops_extrude.set_extrude_drag_amount(state, 0.0)
+    bm_live = bmesh.from_edit_mesh(cube_opp.data)
+    bm_live.verts.ensure_lookup_table()
+    assert max((bm_live.verts[i].co - co).length for i, co in sel_before.items()) < 1e-6
+
+    for m in ("MOVE_X", "MOVE_Y", "UNIFORM_SCALE", "SCALE_X", "SCALE_Y", "TWIST"):  # SCALE_Z is a no-op on planar caps
+        st = ops_extrude.begin_extrude_drag(bpy.context, m, 0.0, 0.0)
+        ops_extrude.update_extrude_drag(st, 60.0, 20.0)
+        bm_live = bmesh.from_edit_mesh(cube_opp.data)
+        bm_live.verts.ensure_lookup_table()
+        assert max((bm_live.verts[i].co - co).length for i, co in sel_before.items()) > 1e-3, m
+        ops_extrude.set_extrude_drag_amount(st, 0.0)
+
+    # Screen-space mapping: radial uniform scale & angular twist around the projected pivot
+    fake = {"mode": "UNIFORM_SCALE", "start": Vector((50.0, 0.0)), "pivot_2d": Vector((0.0, 0.0)), "screen_dir": None, "units_per_px": 0.01, "twist_sign": 1.0}
+    assert abs(ops_extrude.compute_extrude_drag_amount(fake, 100.0, 0.0) - 1.0) < 1e-6
+    fake["mode"] = "TWIST"
+    fake["start"] = Vector((100.0, 0.0))
+    assert abs(ops_extrude.compute_extrude_drag_amount(fake, 0.0, 100.0) - math.pi / 2) < 1e-6
+    assert abs(ops_extrude.compute_extrude_drag_amount(fake, 0.0, 100.0, snap=True) - math.pi / 2) < 1e-6
+    fake.update({"mode": "MOVE_X", "start": Vector((0.0, 0.0)), "screen_dir": Vector((1.0, 0.0)), "units_per_px": 0.02})
+    assert abs(ops_extrude.compute_extrude_drag_amount(fake, 30.0, 40.0) - 0.6) < 1e-6
+    assert abs(ops_extrude.compute_extrude_drag_amount(fake, 30.0, 40.0, precise=True) - 0.06) < 1e-6
+
     # G (maya_ux.repeat_last) chains a new Extrude while session is active
     before_faces = len(bm_sc_check.faces)
     assert bpy.ops.maya_ux.repeat_last() == {"FINISHED"}

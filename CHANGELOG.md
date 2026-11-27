@@ -2,6 +2,13 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.8.1] - 2026-11-27
+### Fixed
+- **Maya Extrude Show Manipulator handles were dead (`ops_extrude.py`)**: dragging the Blue/Red/Green arrows, the Cyan center cube, the axis scale cubes or the Twist ring had no effect in Blender 5.x because the handles delegated to a separate modal operator through `target_set_operator`, whose mouse-move events were swallowed by the gizmo tweak loop.
+  - Every handle now drags **natively** through `Gizmo.invoke / modal / exit` (Blender's official custom-gizmo pattern): live per-frame deformation, `⇧` precise, `⌃` snap (0.1 units / 15°), `RMB`/`Esc` cancel restores the geometry, release pushes one undo step.
+  - Screen-space mapping rewritten: arrows follow the cursor along their projected axis (1:1 world units), the center cube scales radially from the pivot, axis cubes scale by projected distance ratio, the ring twists by the real angle around the pivot. Live value shown in the viewport header.
+  - The `Local ↔ World` button is now a dedicated click gizmo (`VIEW3D_GT_maya_extrude_button`).
+
 ## [2.8.0] - 2026-11-27
 ### Added
 - **Native 3D Maya Extrude Show Manipulator & Video Workflow Parity (`ops_extrude.py`, `ops_selection.py`, `keymap.py`, `ui_channel_box.py`)**:
