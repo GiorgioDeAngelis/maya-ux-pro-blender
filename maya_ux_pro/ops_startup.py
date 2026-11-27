@@ -107,7 +107,9 @@ def apply_clean_maya_ui(context=None, remove_timeline: bool = True):
             sp.show_gizmo_navigate = True
             sp.show_gizmo_tool = True
             sp.show_gizmo_context = True
-            sp.show_gizmo_object_translate = True
+            sp.show_gizmo_object_translate = False
+            sp.show_gizmo_object_rotate = False
+            sp.show_gizmo_object_scale = False
 
             sp.lens = 50.0
             sp.clip_start = 0.01

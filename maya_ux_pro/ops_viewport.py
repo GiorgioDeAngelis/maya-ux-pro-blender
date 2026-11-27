@@ -98,23 +98,23 @@ def _get_view3d_space(context) -> bpy.types.SpaceView3D | None:
 
 
 def _show_gizmo_for_tool(space, tool_id: str):
-    if space is None or tool_id not in {"builtin.move", "builtin.rotate", "builtin.scale", "builtin.transform"}:
+    if space is None:
         return
-    space.show_gizmo = True
-    if tool_id == "builtin.move":
-        space.show_gizmo_object_translate = True
-    elif tool_id == "builtin.rotate":
-        space.show_gizmo_object_rotate = True
-    elif tool_id == "builtin.scale":
-        space.show_gizmo_object_scale = True
-    elif tool_id == "builtin.transform":
-        space.show_gizmo_object_translate = True
-        space.show_gizmo_object_rotate = True
-        space.show_gizmo_object_scale = True
+    # Never leave all-3 overlay gizmos stacked permanently across other modes/tools.
+    space.show_gizmo_object_translate = False
+    space.show_gizmo_object_rotate = False
+    space.show_gizmo_object_scale = False
+    if tool_id in {"builtin.move", "builtin.rotate", "builtin.scale", "builtin.transform"}:
+        space.show_gizmo = True
+        space.show_gizmo_tool = True
 
 
 def _sync_tool_after_mode_switch(context, prev_tool: str):
-    if prev_tool not in {"builtin.move", "builtin.rotate", "builtin.scale", "builtin.transform", "builtin.select_box"}:
+    from . import ops_extrude
+
+    if prev_tool == "builtin.transform":
+        prev_tool = ops_extrude.get_pre_extrude_tool()
+    if prev_tool not in {"builtin.move", "builtin.rotate", "builtin.scale", "builtin.select_box"}:
         return
     try:
         bpy.ops.wm.tool_set_by_id(name=prev_tool)
@@ -124,7 +124,7 @@ def _sync_tool_after_mode_switch(context, prev_tool: str):
 
 
 class MAYA_UX_OT_set_tool(bpy.types.Operator):
-    """Switch active tool (Q/W/E/R) and ensure transform gizmos are visible for W/E/R."""
+    """Switch active tool (Q/W/E/R); all-in-one Transform gizmo is allowed only in Extrude mode."""
 
     bl_idname = "maya_ux.set_tool"
     bl_label = "Maya Set Tool"
@@ -134,6 +134,14 @@ class MAYA_UX_OT_set_tool(bpy.types.Operator):
 
     def execute(self, context):
         global _ACTIVE_TOOL_ID, _EXPLICIT_SELECT_TOOL, _MMB_LOCKED_AXIS
+        from . import ops_extrude
+
+        if self.tool_id == "builtin.transform":
+            if getattr(context, "mode", "OBJECT") != "EDIT_MESH" or not ops_extrude.is_extrude_session_active():
+                self.report({"INFO"}, "All-in-one Transform Gizmo is active only in Extrude mode")
+                return {"CANCELLED"}
+        else:
+            ops_extrude.end_extrude_session(context, restore_tool=False)
 
         try:
             bpy.ops.wm.tool_set_by_id(name=self.tool_id)
@@ -424,10 +432,14 @@ class MAYA_UX_OT_component_mode(bpy.types.Operator):
     )
 
     def execute(self, context):
-        from . import ops_selection
+        from . import ops_extrude, ops_selection
 
         obj = context.active_object
         prev_tool = _get_active_tool_id(context)
+        ended_extrude = ops_extrude.is_extrude_session_active()
+        if ended_extrude:
+            prev_tool = ops_extrude.get_pre_extrude_tool()
+            ops_extrude.end_extrude_session(context, restore_tool=False)
         if self.mode == "TOGGLE":
             if obj is None or obj.type != "MESH":
                 return {"CANCELLED"}
@@ -440,6 +452,8 @@ class MAYA_UX_OT_component_mode(bpy.types.Operator):
         if self.mode == "OBJECT":
             if obj is not None and context.mode != "OBJECT":
                 bpy.ops.object.mode_set(mode="OBJECT")
+                _sync_tool_after_mode_switch(context, prev_tool)
+            elif ended_extrude:
                 _sync_tool_after_mode_switch(context, prev_tool)
             ops_selection.sync_component_selection_display(context, force=True)
             return {"FINISHED"}
@@ -460,7 +474,7 @@ class MAYA_UX_OT_component_mode(bpy.types.Operator):
             "MULTI": (True, True, True),
         }
         context.tool_settings.mesh_select_mode = mode_map[self.mode]
-        if mode_switched:
+        if mode_switched or ended_extrude:
             _sync_tool_after_mode_switch(context, prev_tool)
         if self.mode == "FACE":
             from .preferences import get_prefs
@@ -777,15 +791,13 @@ def _resolve_effective_tool_id(context, tool_override: str = "") -> str:
     if getattr(context.scene.tool_settings, "use_transform_data_origin", False):
         return "builtin.move"
     if not tool_override and not _EXPLICIT_SELECT_TOOL and getattr(context, "mode", "OBJECT") != "OBJECT":
-        if _ACTIVE_TOOL_ID in _TRANSFORM_TOOL_MAP or _ACTIVE_TOOL_ID == "builtin.transform":
+        if _ACTIVE_TOOL_ID in _TRANSFORM_TOOL_MAP:
             return _ACTIVE_TOOL_ID
         ws = getattr(context, "workspace", None)
         if ws is not None and hasattr(ws, "tools"):
             try:
                 obj_tool = ws.tools.from_space_view3d_mode("OBJECT")
-                if obj_tool is not None and (
-                    obj_tool.idname in _TRANSFORM_TOOL_MAP or obj_tool.idname == "builtin.transform"
-                ):
+                if obj_tool is not None and obj_tool.idname in _TRANSFORM_TOOL_MAP:
                     return obj_tool.idname
             except Exception:
                 pass

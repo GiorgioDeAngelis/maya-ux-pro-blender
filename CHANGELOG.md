@@ -2,6 +2,12 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.7.1] - 2026-11-27
+### Fixed
+- **All-in-One Transform Gizmo (`Translate + Rotate + Scale`) Restricted Strictly to Extrude Mode (`ops_extrude.py`, `ops_viewport.py`, `ops_startup.py`, `ops_pivot_snap.py`, `ops_selection.py`)**:
+  - Cleared persistent `show_gizmo_object_translate / rotate / scale` viewport overlay flags across `W/E/R/Q`, Startup, Pivot Snap, and mode switches so only the active single tool gizmo displays outside Extrude.
+  - Added an explicit Extrude manipulator session (`start_extrude_session` / `end_extrude_session` + `bpy.msgbus` observers): running `maya_ux.maya_extrude` activates `builtin.transform` (`Translate + Rotate + Scale` in `Normal`/`Global` space), while switching tools (`Q/W/E/R`), switching modes (`Object` / `Vert` / `Edge` / `Face`), or making a new component selection automatically exits `builtin.transform` and restores your prior tool & orientation. Blocked activating `builtin.transform` outside active Extrude mode.
+
 ## [2.7.0] - 2026-11-27
 ### Added
 - **Authentic Maya Extrude (`Edit Mesh > Extrude`, `maya_ux_pro/ops_extrude.py`)**:

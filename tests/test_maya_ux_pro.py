@@ -1744,15 +1744,44 @@ def test_maya_extrude_pro():
     )
     bm_c_after = bmesh.from_edit_mesh(cube_c.data)
     assert len(bm_c_after.faces) == 6 + 6 * 4
+
+    # 8. Extrude-only All-in-One Gizmo (Translate+Rotate+Scale) lifecycle checks
+    assert ops_extrude.is_extrude_session_active() is True
+    assert bpy.context.scene.transform_orientation_slots[0].type == "NORMAL"
+    assert bpy.ops.maya_ux.set_tool(tool_id="builtin.move") == {"FINISHED"}
+    assert ops_extrude.is_extrude_session_active() is False
+    assert bpy.context.scene.transform_orientation_slots[0].type == "GLOBAL"
+
+    # builtin.transform must be blocked outside Extrude mode (both Edit & Object mode)
+    assert bpy.ops.maya_ux.set_tool(tool_id="builtin.transform") == {"CANCELLED"}
     bpy.ops.object.mode_set(mode="OBJECT")
+    assert bpy.ops.maya_ux.set_tool(tool_id="builtin.transform") == {"CANCELLED"}
+
+    # _show_gizmo_for_tool must never leave permanent object translate/rotate/scale flags ON
+    v3d_space = next(a.spaces.active for a in bpy.context.screen.areas if a.type == "VIEW_3D")
+    ops_viewport._show_gizmo_for_tool(v3d_space, "builtin.move")
+    assert v3d_space.show_gizmo_tool is True
+    assert v3d_space.show_gizmo_object_translate is False
+    assert v3d_space.show_gizmo_object_rotate is False
+    assert v3d_space.show_gizmo_object_scale is False
+
+    # Re-enter Extrude -> leaving to Object Mode exits session and restores GLOBAL orientation
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.context.scene.tool_settings.mesh_select_mode = (False, False, True)
+    assert bpy.ops.maya_ux.maya_extrude(space="LOCAL", thickness=0.1) == {"FINISHED"}
+    assert ops_extrude.is_extrude_session_active() is True
+    assert bpy.ops.maya_ux.component_mode(mode="OBJECT") == {"FINISHED"}
+    assert ops_extrude.is_extrude_session_active() is False
+    assert bpy.context.scene.transform_orientation_slots[0].type == "GLOBAL"
 
     print("[PASS] maya_extrude_pro")
 
 
 def test_unregistration():
-    from maya_ux_pro import ops_selection, ops_startup, ui_poly_hud
+    from maya_ux_pro import ops_extrude, ops_selection, ops_startup, ui_poly_hud
 
     maya_ux_pro.unregister()
+    assert ops_extrude.is_extrude_session_active() is False
     assert ops_selection._SELECTED_VERT_DRAW_HANDLE is None
     assert ops_selection._on_component_display_depsgraph not in bpy.app.handlers.depsgraph_update_post
     assert len(ops_selection._SAVED_COMPONENT_COLORS) == 0

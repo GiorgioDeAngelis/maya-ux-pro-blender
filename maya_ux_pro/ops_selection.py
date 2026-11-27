@@ -638,10 +638,14 @@ class MAYA_UX_OT_select_face_center(bpy.types.Operator):
         if is_ortho_component_view(context):
             hits = _pick_ortho_face_centers(context, mouse_xy, hit_radius_px=radius)
             apply_face_center_selection_multi(objs, hits, toggle=self.toggle, deselect=self.deselect)
-            return {"FINISHED"}
+        else:
+            hit = pick_face_by_center(context, mouse_xy, hit_radius_px=radius)
+            apply_face_center_selection(objs, hit, toggle=self.toggle, deselect=self.deselect)
 
-        hit = pick_face_by_center(context, mouse_xy, hit_radius_px=radius)
-        apply_face_center_selection(objs, hit, toggle=self.toggle, deselect=self.deselect)
+        from . import ops_extrude
+
+        if ops_extrude.is_extrude_session_active():
+            ops_extrude.end_extrude_session(context, restore_tool=True)
         return {"FINISHED"}
 
 
@@ -1387,6 +1391,10 @@ class MAYA_UX_OT_ortho_select_box(bpy.types.Operator):
                 max(self._start_y, self._cur_y),
             )
             select_mesh_components_in_rect(context, _get_edit_mesh_objects(context), rect, mode=self.mode)
+            from . import ops_extrude
+
+            if ops_extrude.is_extrude_session_active():
+                ops_extrude.end_extrude_session(context, restore_tool=True)
             return {"FINISHED"}
 
         if event.type in {"RIGHTMOUSE", "ESC"} and event.value == "PRESS":
@@ -1486,6 +1494,10 @@ class MAYA_UX_OT_ortho_select_click(bpy.types.Operator):
                             el.select = False
                     bm.select_flush_mode()
                     bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+            from . import ops_extrude
+
+            if ops_extrude.is_extrude_session_active():
+                ops_extrude.end_extrude_session(context, restore_tool=True)
             return {"FINISHED"}
 
         resolved_els = [(obj, bm_map[obj], getattr(bm_map[obj], kind)[idx]) for obj, kind, idx in stacked if obj in bm_map]
@@ -1507,6 +1519,10 @@ class MAYA_UX_OT_ortho_select_click(bpy.types.Operator):
         for obj, bm in bm_map.items():
             bm.select_flush_mode()
             bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+        from . import ops_extrude
+
+        if ops_extrude.is_extrude_session_active():
+            ops_extrude.end_extrude_session(context, restore_tool=True)
         return {"FINISHED"}
 
 

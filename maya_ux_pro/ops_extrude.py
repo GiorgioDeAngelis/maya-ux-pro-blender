@@ -17,6 +17,113 @@ from mathutils import Euler, Matrix, Vector
 
 from .preferences import get_prefs
 
+_EXTRUDE_SESSION_ACTIVE: bool = False
+_PRE_EXTRUDE_TOOL: str = "builtin.select_box"
+_PRE_EXTRUDE_ORIENT: str = "GLOBAL"
+_EXTRUDE_MSGBUS_OWNER = object()
+
+
+def is_extrude_session_active() -> bool:
+    """Return True while the all-in-one Extrude Transform manipulator session is active."""
+    return _EXTRUDE_SESSION_ACTIVE
+
+
+def get_pre_extrude_tool() -> str:
+    """Return the non-transform tool saved before entering Extrude mode."""
+    return _PRE_EXTRUDE_TOOL if _PRE_EXTRUDE_TOOL != "builtin.transform" else "builtin.select_box"
+
+
+def _set_view3d_tool_safe(context, tool_id: str):
+    """Switch active 3D View tool and ensure permanent multi-gizmo overlay flags stay disabled."""
+    ctx = context or bpy.context
+    wm = getattr(ctx, "window_manager", None)
+    if wm is not None:
+        for win in wm.windows:
+            for area in win.screen.areas:
+                if area.type != "VIEW_3D":
+                    continue
+                sp = area.spaces.active
+                if sp is not None:
+                    sp.show_gizmo = True
+                    sp.show_gizmo_tool = True
+                    sp.show_gizmo_object_translate = False
+                    sp.show_gizmo_object_rotate = False
+                    sp.show_gizmo_object_scale = False
+                    area.tag_redraw()
+
+    if bpy.app.background:
+        return
+
+    space_data = getattr(ctx, "space_data", None)
+    if space_data is not None and space_data.type == "VIEW_3D":
+        try:
+            bpy.ops.wm.tool_set_by_id(name=tool_id)
+            return
+        except (RuntimeError, AttributeError):
+            pass
+
+    if wm is not None:
+        for win in wm.windows:
+            for area in win.screen.areas:
+                if area.type != "VIEW_3D":
+                    continue
+                reg = next((r for r in area.regions if r.type == "WINDOW"), None)
+                if reg is None or not hasattr(ctx, "temp_override"):
+                    continue
+                try:
+                    with ctx.temp_override(window=win, area=area, region=reg):
+                        bpy.ops.wm.tool_set_by_id(name=tool_id)
+                    return
+                except (RuntimeError, AttributeError):
+                    pass
+
+
+def start_extrude_session(context, space: str):
+    """Enter Extrude session and activate all-in-one Transform gizmo only for Extrude."""
+    global _EXTRUDE_SESSION_ACTIVE, _PRE_EXTRUDE_TOOL, _PRE_EXTRUDE_ORIENT
+    from . import ops_viewport
+
+    ctx = context or bpy.context
+    scene = getattr(ctx, "scene", None)
+    if not _EXTRUDE_SESSION_ACTIVE:
+        cur_tool = ops_viewport._get_active_tool_id(ctx)
+        _PRE_EXTRUDE_TOOL = cur_tool if cur_tool != "builtin.transform" else "builtin.select_box"
+        slots = getattr(scene, "transform_orientation_slots", None) if scene is not None else None
+        _PRE_EXTRUDE_ORIENT = slots[0].type if (slots and len(slots) > 0) else "GLOBAL"
+
+    _EXTRUDE_SESSION_ACTIVE = True
+    if scene is not None:
+        slots = getattr(scene, "transform_orientation_slots", None)
+        if slots and len(slots) > 0:
+            slots[0].type = "NORMAL" if space == "LOCAL" else "GLOBAL"
+
+    if bool(getattr(get_prefs(ctx), "extrude_activate_gizmo", True)):
+        _set_view3d_tool_safe(ctx, "builtin.transform")
+
+
+def end_extrude_session(context=None, restore_tool: bool = True):
+    """Exit Extrude session, restore orientation, and exit the all-in-one Transform gizmo."""
+    global _EXTRUDE_SESSION_ACTIVE
+    if not _EXTRUDE_SESSION_ACTIVE:
+        return
+    _EXTRUDE_SESSION_ACTIVE = False
+    ctx = context or bpy.context
+    scene = getattr(ctx, "scene", None)
+    if scene is not None:
+        slots = getattr(scene, "transform_orientation_slots", None)
+        if slots and len(slots) > 0:
+            try:
+                slots[0].type = _PRE_EXTRUDE_ORIENT
+            except (TypeError, ValueError):
+                slots[0].type = "GLOBAL"
+    if restore_tool:
+        _set_view3d_tool_safe(ctx, get_pre_extrude_tool())
+
+
+def _on_extrude_context_change():
+    if _EXTRUDE_SESSION_ACTIVE:
+        end_extrude_session(bpy.context, restore_tool=True)
+
 
 def _vec_norm(v: Vector, fallback: Vector) -> Vector:
     return v.normalized() if v.length > 1e-8 else fallback.copy()
@@ -876,17 +983,8 @@ class MAYA_UX_OT_maya_extrude(bpy.types.Operator):
 
         bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=True)
 
-        # Maya Show Manipulator: activate universal transform gizmo & align orientation
-        if bool(getattr(get_prefs(context), "extrude_activate_gizmo", True)) and not bpy.app.background:
-            slots = getattr(scene, "transform_orientation_slots", None)
-            if slots and len(slots) > 0:
-                slots[0].type = "NORMAL" if self.space == "LOCAL" else "GLOBAL"
-            space_data = getattr(context, "space_data", None)
-            if space_data is not None and space_data.type == "VIEW_3D":
-                try:
-                    bpy.ops.wm.tool_set_by_id(name="builtin.transform")
-                except (RuntimeError, AttributeError):
-                    pass
+        # Maya Show Manipulator: activate all-in-one Transform gizmo strictly for this Extrude session
+        start_extrude_session(context, self.space)
 
         self.report({"INFO"}, f"Maya Extrude ({lbl}, {count}): KeepTogether={'ON' if self.keep_faces_together else 'OFF'}")
         return {"FINISHED"}
@@ -959,9 +1057,10 @@ class MAYA_UX_OT_toggle_extrude_space(bpy.types.Operator):
         cur = getattr(scene, "maya_ux_extrude_space", "LOCAL")
         nxt = "WORLD" if cur == "LOCAL" else "LOCAL"
         scene.maya_ux_extrude_space = nxt
-        slots = getattr(scene, "transform_orientation_slots", None)
-        if slots and len(slots) > 0:
-            slots[0].type = "NORMAL" if nxt == "LOCAL" else "GLOBAL"
+        if _EXTRUDE_SESSION_ACTIVE:
+            slots = getattr(scene, "transform_orientation_slots", None)
+            if slots and len(slots) > 0:
+                slots[0].type = "NORMAL" if nxt == "LOCAL" else "GLOBAL"
         self.report({"INFO"}, f"Extrude Space: {nxt.title()}")
         return {"FINISHED"}
 
@@ -1038,9 +1137,23 @@ def register():
     )
     for cls in CLASSES:
         bpy.utils.register_class(cls)
+    bpy.msgbus.subscribe_rna(
+        key=(bpy.types.Object, "mode"),
+        owner=_EXTRUDE_MSGBUS_OWNER,
+        args=(),
+        notify=_on_extrude_context_change,
+    )
+    bpy.msgbus.subscribe_rna(
+        key=(bpy.types.ToolSettings, "mesh_select_mode"),
+        owner=_EXTRUDE_MSGBUS_OWNER,
+        args=(),
+        notify=_on_extrude_context_change,
+    )
 
 
 def unregister():
+    bpy.msgbus.clear_by_owner(_EXTRUDE_MSGBUS_OWNER)
+    end_extrude_session(bpy.context, restore_tool=True)
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
     for attr in ("maya_ux_extrude_curve", "maya_ux_extrude_space", "maya_ux_keep_faces_together"):

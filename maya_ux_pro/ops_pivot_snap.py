@@ -75,7 +75,7 @@ class MAYA_UX_OT_toggle_edit_pivot(bpy.types.Operator):
             space = getattr(context, "space_data", None)
             if space is not None and space.type == "VIEW_3D":
                 space.show_gizmo = True
-                space.show_gizmo_object_translate = True
+                space.show_gizmo_tool = True
 
         self.report({"INFO"}, f"Edit Pivot: {'ON' if new_state else 'OFF'}")
         return {"FINISHED"}
@@ -282,7 +282,7 @@ class MAYA_UX_OT_maya_pivot_hold(bpy.types.Operator):
             space = getattr(context, "space_data", None)
             if space is not None and space.type == "VIEW_3D":
                 space.show_gizmo = True
-                space.show_gizmo_object_translate = True
+                space.show_gizmo_tool = True
             _redraw_view3d_areas(context)
         else:
             if _HOLD_PIVOT_BACKUP is not None:

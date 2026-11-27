@@ -1,4 +1,4 @@
-# Maya UX Pro — Complete Hotkey Reference (`v2.7.0`)
+# Maya UX Pro — Complete Hotkey Reference (`v2.7.1`)
 
 > Press **`?`** (or **`F1`**) inside Blender's 3D Viewport at any time to open the live searchable **Hotkey Reference & Equivalence** dialog.
 
