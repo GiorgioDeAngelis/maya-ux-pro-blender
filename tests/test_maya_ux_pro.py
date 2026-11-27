@@ -1,7 +1,9 @@
+import math
 import os
 import sys
 import tempfile
 
+import bmesh
 import bpy
 from mathutils import Euler, Quaternion, Vector
 
@@ -1493,6 +1495,260 @@ def test_maya_poly_count_hud():
     print("[PASS] maya_poly_count_hud")
 
 
+def test_maya_extrude_pro():
+    from maya_ux_pro import ops_extrude
+
+    # Keymap bindings check
+    mesh_kmis = [kmi for km, kmi in keymap.addon_keymaps if km.name == "Mesh" and kmi.idname == "maya_ux.maya_extrude"]
+    keep_kmis = [
+        kmi for km, kmi in keymap.addon_keymaps if km.name == "Mesh" and kmi.idname == "maya_ux.toggle_keep_faces_together"
+    ]
+    assert len(mesh_kmis) >= 1 and len(keep_kmis) >= 1
+
+    # Toggle operators
+    cube = _reset_scene()
+    assert bool(bpy.context.scene.maya_ux_keep_faces_together) is True
+    assert bpy.ops.maya_ux.toggle_keep_faces_together() == {"FINISHED"}
+    assert bool(bpy.context.scene.maya_ux_keep_faces_together) is False
+    assert bpy.ops.maya_ux.toggle_keep_faces_together() == {"FINISHED"}
+    assert bool(bpy.context.scene.maya_ux_keep_faces_together) is True
+
+    assert bpy.context.scene.maya_ux_extrude_space == "LOCAL"
+    assert bpy.ops.maya_ux.toggle_extrude_space() == {"FINISHED"}
+    assert bpy.context.scene.maya_ux_extrude_space == "WORLD"
+    assert bpy.ops.maya_ux.toggle_extrude_space() == {"FINISHED"}
+    assert bpy.context.scene.maya_ux_extrude_space == "LOCAL"
+
+    # 1. Face Extrude: Keep Faces Together ON (unified shell = 12 faces on 2 adjacent Cube faces)
+    bpy.ops.object.mode_set(mode="EDIT")
+    ts = bpy.context.scene.tool_settings
+    ts.mesh_select_mode = (False, False, True)
+    bm = bmesh.from_edit_mesh(cube.data)
+    bm.faces.ensure_lookup_table()
+    seed_f = bm.faces[0]
+    adj_f = next(af for e in seed_f.edges for af in e.link_faces if af != seed_f)
+    for f in bm.faces:
+        f.select = f in (seed_f, adj_f)
+    bm.select_flush_mode()
+    bmesh.update_edit_mesh(cube.data)
+    assert ops_extrude.detect_extrude_component(bpy.context, bm) == "FACE"
+
+    assert (
+        bpy.ops.maya_ux.maya_extrude(
+            space="LOCAL",
+            keep_faces_together=True,
+            thickness=0.5,
+            divisions=1,
+        )
+        == {"FINISHED"}
+    )
+    bm_after_on = bmesh.from_edit_mesh(cube.data)
+    assert len(bm_after_on.faces) == 12
+    assert sum(1 for f in bm_after_on.faces if f.select) == 2
+
+    # 2. Face Extrude: Keep Faces Together OFF (discrete tubes = 14 faces on 2 adjacent Cube faces)
+    cube = _reset_scene()
+    bpy.ops.object.mode_set(mode="EDIT")
+    ts = bpy.context.scene.tool_settings
+    ts.mesh_select_mode = (False, False, True)
+    bm = bmesh.from_edit_mesh(cube.data)
+    bm.faces.ensure_lookup_table()
+    seed_f = bm.faces[0]
+    adj_f = next(af for e in seed_f.edges for af in e.link_faces if af != seed_f)
+    for f in bm.faces:
+        f.select = f in (seed_f, adj_f)
+    bm.select_flush_mode()
+    bmesh.update_edit_mesh(cube.data)
+
+    assert (
+        bpy.ops.maya_ux.maya_extrude(
+            space="LOCAL",
+            keep_faces_together=False,
+            thickness=0.5,
+            divisions=1,
+        )
+        == {"FINISHED"}
+    )
+    bm_after_off = bmesh.from_edit_mesh(cube.data)
+    assert len(bm_after_off.faces) == 14
+    assert sum(1 for f in bm_after_off.faces if f.select) == 2
+
+    # 3. Face Extrude: Offset (+ = inward inset), Divisions, Taper, Twist on top face (Normal +Z)
+    cube = _reset_scene()
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.context.scene.tool_settings.mesh_select_mode = (False, False, True)
+    bm = bmesh.from_edit_mesh(cube.data)
+    top_f = max(bm.faces, key=lambda f: f.normal.z)
+    orig_area = top_f.calc_area()
+    for f in bm.faces:
+        f.select = f == top_f
+    bm.select_flush_mode()
+    bmesh.update_edit_mesh(cube.data)
+
+    assert (
+        bpy.ops.maya_ux.maya_extrude(
+            space="LOCAL",
+            keep_faces_together=True,
+            thickness=1.0,
+            offset=0.25,
+            divisions=4,
+            taper=0.5,
+            twist=math.radians(45.0),
+        )
+        == {"FINISHED"}
+    )
+    bm_top = bmesh.from_edit_mesh(cube.data)
+    assert len(bm_top.faces) == 6 + 4 * 4  # 22
+    cap_fs = [f for f in bm_top.faces if f.select]
+    assert len(cap_fs) == 1
+    assert abs(cap_fs[0].calc_center_median().z - 2.0) < 1e-4
+    assert cap_fs[0].calc_area() < orig_area * 0.5
+
+    # 4. World Space vs Local Space on rotated object
+    cube = _reset_scene()
+    cube.rotation_euler = Euler((math.radians(90.0), 0.0, 0.0), "XYZ")
+    bpy.context.view_layer.update()
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.context.scene.tool_settings.mesh_select_mode = (False, False, True)
+    bm = bmesh.from_edit_mesh(cube.data)
+    bm.faces.ensure_lookup_table()
+    top_f = bm.faces[0]
+    for f in bm.faces:
+        f.select = f == top_f
+    bm.select_flush_mode()
+    bmesh.update_edit_mesh(cube.data)
+    mw = cube.matrix_world.copy()
+    before_world = mw @ top_f.calc_center_median()
+
+    assert (
+        bpy.ops.maya_ux.maya_extrude(
+            space="WORLD",
+            local_translate=(1.0, 0.0, 0.0),
+            divisions=1,
+        )
+        == {"FINISHED"}
+    )
+    bm_w = bmesh.from_edit_mesh(cube.data)
+    cap_world = mw @ next(f for f in bm_w.faces if f.select).calc_center_median()
+    assert abs((cap_world.x - before_world.x) - 1.0) < 1e-4
+    assert abs(cap_world.y - before_world.y) < 1e-4
+    assert abs(cap_world.z - before_world.z) < 1e-4
+
+    # 5. Edge Extrude (polyExtrudeEdge): Keep Together ON vs OFF
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.mesh.primitive_plane_add(location=(0.0, 0.0, 0.0))
+    plane = bpy.context.active_object
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.context.scene.tool_settings.mesh_select_mode = (False, True, False)
+    bm_p = bmesh.from_edit_mesh(plane.data)
+    bm_p.verts.ensure_lookup_table()
+    bm_p.edges.ensure_lookup_table()
+    v_shared = bm_p.verts[0]
+    e_pair = list(v_shared.link_edges)[:2]
+    for grp in (bm_p.verts, bm_p.edges, bm_p.faces):
+        for el in grp:
+            el.select = False
+    for e in e_pair:
+        e.select = True
+    bm_p.select_flush_mode()
+    bmesh.update_edit_mesh(plane.data)
+    assert ops_extrude.detect_extrude_component(bpy.context, bm_p) == "EDGE"
+
+    assert bpy.ops.maya_ux.maya_extrude(space="LOCAL", keep_faces_together=True, thickness=0.5, divisions=3) == {"FINISHED"}
+    assert len(bmesh.from_edit_mesh(plane.data).faces) == 1 + 2 * 3
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.mesh.primitive_plane_add(location=(0.0, 0.0, 0.0))
+    plane2 = bpy.context.active_object
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.context.scene.tool_settings.mesh_select_mode = (False, True, False)
+    bm_p2 = bmesh.from_edit_mesh(plane2.data)
+    bm_p2.verts.ensure_lookup_table()
+    e_pair2 = list(bm_p2.verts[0].link_edges)[:2]
+    for grp in (bm_p2.verts, bm_p2.edges, bm_p2.faces):
+        for el in grp:
+            el.select = False
+    for e in e_pair2:
+        e.select = True
+    bm_p2.select_flush_mode()
+    bmesh.update_edit_mesh(plane2.data)
+    assert bpy.ops.maya_ux.maya_extrude(space="LOCAL", keep_faces_together=False, thickness=0.5, divisions=2) == {"FINISHED"}
+    bm_p2_after = bmesh.from_edit_mesh(plane2.data)
+    assert len(bm_p2_after.faces) == 1 + 2 * 2
+    sel_e_after = [e for e in bm_p2_after.edges if e.select]
+    assert len(sel_e_after) == 2 and len({v for e in sel_e_after for v in e.verts}) == 4
+
+    # 6. Vertex Extrude (polyExtrudeVertex): Width + Length + Divisions=1 & Divisions=3
+    cube_v = _reset_scene()
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.context.scene.tool_settings.mesh_select_mode = (True, False, False)
+    bm_v = bmesh.from_edit_mesh(cube_v.data)
+    bm_v.verts.ensure_lookup_table()
+    v0 = bm_v.verts[0]
+    v0_orig = v0.co.copy()
+    v0_norm = v0.normal.normalized()
+    for grp in (bm_v.verts, bm_v.edges, bm_v.faces):
+        for el in grp:
+            el.select = False
+    v0.select = True
+    bm_v.select_flush_mode()
+    bmesh.update_edit_mesh(cube_v.data)
+    assert ops_extrude.detect_extrude_component(bpy.context, bm_v) == "VERT"
+
+    assert bpy.ops.maya_ux.maya_extrude(vertex_width=0.2, vertex_length=0.5, divisions=1) == {"FINISHED"}
+    bm_v_after = bmesh.from_edit_mesh(cube_v.data)
+    assert len(bm_v_after.faces) == 6 + 3
+    apex = next(v for v in bm_v_after.verts if v.select)
+    assert abs((apex.co - v0_orig).dot(v0_norm) - 0.5) < 1e-4
+
+    cube_v2 = _reset_scene()
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.context.scene.tool_settings.mesh_select_mode = (True, False, False)
+    bm_v2 = bmesh.from_edit_mesh(cube_v2.data)
+    bm_v2.verts.ensure_lookup_table()
+    for grp in (bm_v2.verts, bm_v2.edges, bm_v2.faces):
+        for el in grp:
+            el.select = False
+    bm_v2.verts[0].select = True
+    bm_v2.select_flush_mode()
+    bmesh.update_edit_mesh(cube_v2.data)
+    assert bpy.ops.maya_ux.maya_extrude(vertex_width=0.25, vertex_length=0.8, divisions=3, taper=0.8) == {"FINISHED"}
+    assert len(bmesh.from_edit_mesh(cube_v2.data).faces) == 6 + 3 * 3
+
+    # 7. Extrude Along Curve (Curve sampling + Divisions + Taper)
+    cube_c = _reset_scene()
+    bpy.ops.curve.primitive_bezier_curve_add(location=(0.0, 0.0, 1.0))
+    curve_obj = bpy.context.active_object
+    bpy.ops.object.select_all(action="DESELECT")
+    cube_c.select_set(True)
+    bpy.context.view_layer.objects.active = cube_c
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.context.scene.tool_settings.mesh_select_mode = (False, False, True)
+    bm_c = bmesh.from_edit_mesh(cube_c.data)
+    top_fc = max(bm_c.faces, key=lambda f: f.normal.z)
+    for f in bm_c.faces:
+        f.select = f == top_fc
+    bm_c.select_flush_mode()
+    bmesh.update_edit_mesh(cube_c.data)
+
+    frames = ops_extrude.sample_curve_frames_local(bpy.context, cube_c, curve_obj, divisions=6)
+    assert len(frames) == 7
+    assert (
+        bpy.ops.maya_ux.maya_extrude(
+            use_curve=True,
+            curve_name=curve_obj.name,
+            divisions=6,
+            taper=0.5,
+        )
+        == {"FINISHED"}
+    )
+    bm_c_after = bmesh.from_edit_mesh(cube_c.data)
+    assert len(bm_c_after.faces) == 6 + 6 * 4
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    print("[PASS] maya_extrude_pro")
+
+
 def test_unregistration():
     from maya_ux_pro import ops_selection, ops_startup, ui_poly_hud
 
@@ -1517,6 +1773,9 @@ def test_unregistration():
     assert not hasattr(bpy.types.Scene, "maya_ux_live_surface")
     assert not hasattr(bpy.types.Scene, "maya_ux_shelf_tab")
     assert not hasattr(bpy.types.Scene, "maya_ux_cam_slots")
+    assert not hasattr(bpy.types.Scene, "maya_ux_keep_faces_together")
+    assert not hasattr(bpy.types.Scene, "maya_ux_extrude_space")
+    assert not hasattr(bpy.types.Scene, "maya_ux_extrude_curve")
     print("[PASS] unregistration")
 
 
@@ -1536,5 +1795,6 @@ if __name__ == "__main__":
     test_maya_spacebar_and_hotbox()
     test_clean_startup_and_empty_scene()
     test_maya_poly_count_hud()
+    test_maya_extrude_pro()
     test_unregistration()
     print("ALL TESTS PASSED!")

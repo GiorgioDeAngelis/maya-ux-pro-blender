@@ -67,7 +67,7 @@ class VIEW3D_MT_maya_modeling_pie(bpy.types.Menu):
         if context.mode == "EDIT_MESH":
             # W / E / S / N / NW / NE / SW / SE
             pie.operator("mesh.bevel", text="Bevel", icon="MOD_BEVEL")
-            pie.operator("view3d.edit_mesh_extrude_move_normal", text="Extrude Face", icon="FACESEL")
+            pie.operator("maya_ux.maya_extrude", text="Extrude (Maya)", icon="FACESEL")
             pie.operator("maya_ux.target_weld", text="Target Weld", icon="AUTOMERGE_ON")
             op = pie.operator("wm.tool_set_by_id", text="Insert Edge Loop", icon="MOD_MULTIRES")
             op.name = "builtin.loop_cut"

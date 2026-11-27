@@ -56,7 +56,8 @@ def _get_sections(is_mac: bool):
             ("Dup In-Place / +Transform / Special", f"{c}+D / {s}+D / {c}+{s}+D"),
             ("Delete History", f"{o}+{s}+D"),
             ("Group / Parent / Unparent", f"{c}+G / P / {s}+P"),
-            ("Extrude / Bevel / Multi-Cut", f"{c}+E / {c}+B / {c}+{s}+X"),
+            ("Maya Extrude (Face/Edge/Vert/Curve)", f"{c}+E  |  {c}+{s}+E Keep Together"),
+            ("Bevel / Multi-Cut", f"{c}+B / {c}+{s}+X"),
             ("Bridge / Merge Menu / Reverse Normals", f"{c}+{s}+B / M ({c}+{o}+M) / {o}+N"),
             ("Target Weld / Quad Draw / Make Live", "Shift+RMB / Maya Panel / Top Shelf"),
         )
@@ -113,7 +114,8 @@ def _get_sections(is_mac: bool):
             ("Dup In-Place / +Transform / Special", "Ctrl+D / Shift+D / Ctrl+Shift+D"),
             ("Delete History", "Alt + Shift + D"),
             ("Group / Parent / Unparent", "Ctrl+G / P / Shift+P"),
-            ("Extrude / Bevel / Multi-Cut", "Ctrl+E / Ctrl+B / Ctrl+Shift+X"),
+            ("Maya Extrude (Face/Edge/Vert/Curve)", "Ctrl+E  |  Ctrl+Shift+E Keep Together"),
+            ("Bevel / Multi-Cut", "Ctrl+B / Ctrl+Shift+X"),
             ("Bridge / Merge Menu / Reverse Normals", "Ctrl+Shift+B / M (Ctrl+Alt+M) / Alt+N"),
             ("Target Weld / Quad Draw / Make Live", "Shift+RMB / Maya Panel / Top Shelf"),
         )

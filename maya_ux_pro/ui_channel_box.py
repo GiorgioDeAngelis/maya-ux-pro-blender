@@ -151,6 +151,21 @@ class MAYA_UX_PT_transform_pivot(bpy.types.Panel):
         row4.operator("maya_ux.duplicate_with_transform", text=f"{sh_lbl}D")
         row4.operator("maya_ux.duplicate_special", text="Special")
 
+        # Maya Extrude Box (Edit Mesh > Extrude & Keep Faces Together)
+        ex_box = layout.box()
+        ex_row = ex_box.row(align=True)
+        ex_row.operator("maya_ux.maya_extrude", text=f"Extrude ({cmd_lbl}E)", icon="FACESEL")
+        ex_row.operator(
+            "maya_ux.toggle_keep_faces_together",
+            text="Keep Together",
+            depress=bool(getattr(context.scene, "maya_ux_keep_faces_together", True)),
+        )
+        sp = getattr(context.scene, "maya_ux_extrude_space", "LOCAL")
+        ex_row2 = ex_box.row(align=True)
+        ex_row2.operator("maya_ux.toggle_extrude_space", text=f"Space: {sp.title()}", icon="ORIENTATION_NORMAL")
+        ex_row2.operator("maya_ux.extrude_along_curve", text="Along Curve", icon="CURVE_BEZCURVE")
+        ex_box.prop(context.scene, "maya_ux_extrude_curve", text="Curve")
+
         # MMB Virtual Drag Axis Lock
         yup_mode = bool(getattr(get_prefs(context), "channel_box_yup", False))
         cur_mmb = ops_viewport._MMB_LOCKED_AXIS

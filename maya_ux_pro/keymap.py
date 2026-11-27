@@ -551,7 +551,8 @@ def register_keymaps():
             _add_kmi(km_view3d, "maya_ux.toggle_discrete_snap", "J")
         _add_kmi(km_view3d, "maya_ux.toggle_relative_snap", "J", shift=True)
 
-        _add_primary_kmi(km_mesh, "view3d.edit_mesh_extrude_move_normal", "E", is_mac=is_mac, allow_cmd=True)
+        _add_primary_kmi(km_mesh, "maya_ux.maya_extrude", "E", is_mac=is_mac, allow_cmd=True)
+        _add_primary_kmi(km_mesh, "maya_ux.toggle_keep_faces_together", "E", is_mac=is_mac, shift=True, allow_cmd=True)
         _add_primary_kmi(km_mesh, "mesh.bevel", "B", is_mac=is_mac, allow_cmd=True)
         _add_primary_kmi(km_mesh, "mesh.knife_tool", "X", is_mac=is_mac, shift=True, allow_cmd=True)
         _add_primary_kmi(km_mesh, "mesh.bridge_edge_loops", "B", is_mac=is_mac, shift=True, allow_cmd=True)

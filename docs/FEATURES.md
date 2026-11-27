@@ -1,6 +1,6 @@
-# Maya UX Pro — Features & Module Architecture (`v2.5.1`)
+# Maya UX Pro — Features & Module Architecture (`v2.7.0`)
 
-Maya UX Pro is organized into **25 cleanly modular Python files** inside `maya_ux_pro/`. Every module can be toggled or configured in **Preferences → Extensions / Add-ons → Maya UX Pro**.
+Maya UX Pro is organized into **26 cleanly modular Python files** inside `maya_ux_pro/`. Every module can be toggled or configured in **Preferences → Extensions / Add-ons → Maya UX Pro**.
 
 ---
 
@@ -72,7 +72,7 @@ Maya UX Pro is organized into **25 cleanly modular Python files** inside `maya_u
 ---
 
 ## 8. Modeling, Smooth Preview, Retopo, CamTools, Materials & I/O
-- **Modeling & Outliner** ([`ops_modeling.py`](../maya_ux_pro/ops_modeling.py), [`ops_modeling_pro.py`](../maya_ux_pro/ops_modeling_pro.py), [`ops_outliner.py`](../maya_ux_pro/ops_outliner.py)): `Freeze Transforms`, `Delete History`, `Combine` / `Separate`, Maya Null **`Group`** (`⌘+G`), `Duplicate In-Place` / `+Transform` / `Duplicate Special`, interactive GPU **`Target Weld`**, **`Merge to Last`**.
+- **Modeling & Outliner** ([`ops_modeling.py`](../maya_ux_pro/ops_modeling.py), [`ops_modeling_pro.py`](../maya_ux_pro/ops_modeling_pro.py), [`ops_extrude.py`](../maya_ux_pro/ops_extrude.py), [`ops_outliner.py`](../maya_ux_pro/ops_outliner.py)): `Freeze Transforms`, `Delete History`, `Combine` / `Separate`, Maya Null **`Group`** (`⌘+G`), `Duplicate In-Place` / `+Transform` / `Duplicate Special`, interactive GPU **`Target Weld`**, **`Merge to Last`**, and **Maya Extrude Pro** (`maya_ux.maya_extrude` for Faces, Edges, Vertices & Curves with `Thickness`, `Local/World Translate`, `Offset`, `Divisions`, `Keep Faces Together`, `Taper`, `Twist`, Vertex `Length`/`Width`, and Show Manipulator).
 - **Smooth Preview** ([`ops_smooth.py`](../maya_ux_pro/ops_smooth.py)): `1` / `2` / `3` non-destructive `MayaSmoothPreview` Subsurf workflow + `PgUp` / `PgDn`.
 - **Retopo Pro** ([`ops_retopo.py`](../maya_ux_pro/ops_retopo.py)): **`Make Live`**, **`Quad Draw`** (auto `Shrinkwrap` + `Mirror` + `FACE_PROJECT` snap + Retopo overlay + `Poly Build`), **`Relax`**, **`Finish / Bake`**.
 - **CamTools Pro** ([`ops_camtools.py`](../maya_ux_pro/ops_camtools.py)): `Cam from View`, Lock Camera, `24/35/50/85mm` presets, `Fix Clip` (`0.01..10000`), DoF, Passepartout, Composition Guides, 4 per-scene Camera Bookmarks.

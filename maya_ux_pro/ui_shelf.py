@@ -45,6 +45,7 @@ def draw_maya_shelf(self, context):
         row.operator("mesh.primitive_plane_add", text="", icon="MESH_PLANE")
         row.operator("maya_ux.combine", text="", icon="SELECT_EXTEND")
         row.operator("maya_ux.separate", text="", icon="UNLINKED")
+        row.operator("maya_ux.maya_extrude", text="Extrude", icon="FACESEL")
         row.operator("maya_ux.target_weld", text="Weld", icon="AUTOMERGE_ON")
         row.operator("maya_ux.pivot_action", text="", icon="PIVOT_BOUNDBOX").action = "CENTER"
         row.operator("maya_ux.freeze_transforms", text="", icon="FREEZE")

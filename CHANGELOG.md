@@ -2,6 +2,12 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.7.0] - 2026-11-27
+### Added
+- **Authentic Maya Extrude (`Edit Mesh > Extrude`, `maya_ux_pro/ops_extrude.py`)**:
+  - Replaced Blender's basic extrude on **`⌘+E` / `Ctrl+E`**, **`Shift+RMB`** Modeling Pie, **Top Shelf (`Poly`)**, **Floating Hotbox**, and **N-Panel (`Pivot & Modeling`)** with **`maya_ux.maya_extrude`** supporting **Faces** (`polyExtrudeFace`), **Edges** (`polyExtrudeEdge`), **Vertices** (`polyExtrudeVertex`), and **Curve Paths** (`Extrude Along Curve`).
+  - Implemented Maya's full attribute & manipulator set: **`Thickness`** (uniform normal depth), **`Local / World Translate (X/Y/Z)`** with live **Local ↔ World** coordinate space toggle (`maya_ux.toggle_extrude_space`), **`Offset`** (`+` inset / `-` outset), **`Divisions`**, **`Keep Faces Together`** (`ON` unified shell / `OFF` discrete components, toggled via **`⌘+⇧+E` / `Ctrl+Shift+E`** via `maya_ux.toggle_keep_faces_together`), **`Taper`**, **`Twist`**, **`Scale`**, **`Rotate`**, Vertex **`Length`** & **`Width`**, **`Extrude Along Curve`** (`maya_ux.extrude_along_curve`), and automatic **Show Manipulator** (`builtin.transform`) gizmo activation (`extrude_activate_gizmo` preference).
+
 ## [2.6.3] - 2026-11-27
 ### Added
 - **Enlarged Selected Vertices Overlay (`ops_selection.py`, `preferences.py`)**:

@@ -387,6 +387,10 @@ class MAYA_UX_OT_hotbox_popup(bpy.types.Operator):
         rc = ecol.row(align=True)
         rc.operator("maya_ux.combine", text="Combine")
         rc.operator("maya_ux.separate", text="Separate")
+        rex = ecol.row(align=True)
+        rex.operator("maya_ux.maya_extrude", text=f"Extrude ({mod_cmd}E)", icon="FACESEL")
+        keep_on = bool(getattr(context.scene, "maya_ux_keep_faces_together", True))
+        rex.operator("maya_ux.toggle_keep_faces_together", text=f"Keep: {'ON' if keep_on else 'OFF'}")
         rs = ecol.row(align=True)
         rs.operator("maya_ux.smooth_preview", text="1 Rough").level = 1
         rs.operator("maya_ux.smooth_preview", text="2 Cage").level = 2

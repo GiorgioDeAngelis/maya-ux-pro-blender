@@ -357,6 +357,11 @@ class MayaUXPreferences(bpy.types.AddonPreferences):
         step=50,
         update=_on_selected_vert_size_update,
     )
+    extrude_activate_gizmo: BoolProperty(
+        name="Extrude: Show Manipulator Gizmo",
+        description="Activate the 3D Transform Manipulator (Local Normal / World) after Maya Extrude",
+        default=True,
+    )
 
     def draw(self, context):
         layout = self.layout
@@ -435,6 +440,7 @@ class MayaUXPreferences(bpy.types.AddonPreferences):
         beh_box.prop(self, "enlarge_selected_vertices")
         if self.enlarge_selected_vertices:
             beh_box.prop(self, "selected_vertex_size")
+        beh_box.prop(self, "extrude_activate_gizmo")
         beh_box.prop(self, "clean_empty_new_scene")
         beh_box.prop(self, "clean_maya_startup_layout")
 
@@ -480,6 +486,7 @@ _DEFAULT_PREFS = SimpleNamespace(
     isolate_component_display=True,
     enlarge_selected_vertices=True,
     selected_vertex_size=6.0,
+    extrude_activate_gizmo=True,
 )
 
 

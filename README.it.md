@@ -5,10 +5,10 @@
 **Il workflow autentico di Autodesk Maya dentro Blender 4.2 – 5.3+ — Barra Spaziatrice & Hotbox fluttuante, Smart Middle Mouse, Selezione Face Center-Only, Poly Count HUD, Hold-`D` Pivot & Snap, Retopo e CamTools Pro.**
 
 [![Blender](https://img.shields.io/badge/Blender-4.2%20--%205.3%2B-orange?logo=blender)](https://www.blender.org/)
-[![Version](https://img.shields.io/badge/Release-v2.6.3-blue)](https://github.com/GiorgioDeAngelis/maya-ux-pro-blender/releases/latest)
+[![Version](https://img.shields.io/badge/Release-v2.7.0-blue)](https://github.com/GiorgioDeAngelis/maya-ux-pro-blender/releases/latest)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-green.svg)](./LICENSE)
 [![Platforms](https://img.shields.io/badge/OS-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](#profili-piattaforma-macos--windowslinux)
-[![Tests](https://img.shields.io/badge/Test%20Headless-16%2F16%20Superati-brightgreen)](./CONTRIBUTING.md)
+[![Tests](https://img.shields.io/badge/Test%20Headless-17%2F17%20Superati-brightgreen)](./CONTRIBUTING.md)
 
 [English (README.md)](./README.md) | **Italiano** · [Tutte le Scorciatoie](./docs/HOTKEYS.md) · [Guida Funzionalità](./docs/FEATURES.md) · [Changelog](./CHANGELOG.md)
 
@@ -27,12 +27,12 @@ Passare da Autodesk Maya a Blender richiede molto più di qualche scorciatoia ca
 ## Installazione Rapida (30 Secondi)
 
 ### Metodo A — Drag & Drop (Consigliato, Blender 4.2+)
-1. Scarica **`maya_ux_pro-2.6.3.zip`** dall'[**Ultima Release GitHub**](https://github.com/GiorgioDeAngelis/maya-ux-pro-blender/releases/latest/download/maya_ux_pro-2.6.3.zip).
+1. Scarica **`maya_ux_pro-2.7.0.zip`** dall'[**Ultima Release GitHub**](https://github.com/GiorgioDeAngelis/maya-ux-pro-blender/releases/latest/download/maya_ux_pro-2.7.0.zip).
 2. Apri Blender e **trascina il file `.zip`** direttamente dentro la finestra di Blender.
 3. Premi **OK** nella finestra di conferma: l'estensione si attiva subito.
 
 ### Metodo B — Install from Disk
-1. Scarica `maya_ux_pro-2.6.3.zip` dalle [Releases](https://github.com/GiorgioDeAngelis/maya-ux-pro-blender/releases/latest).
+1. Scarica `maya_ux_pro-2.7.0.zip` dalle [Releases](https://github.com/GiorgioDeAngelis/maya-ux-pro-blender/releases/latest).
 2. Apri **Edit → Preferences → Get Extensions** (menu `⌄` in alto a destra) → **Install from Disk...**.
 3. Seleziona il file `.zip` e verifica che **Maya UX Pro** sia attivo.
 
@@ -56,6 +56,7 @@ Passare da Autodesk Maya a Blender richiede molto più di qualche scorciatoia ca
 | **Face Center-Only Selection** | Mostra il quadratino centrale (`show_face_center`, dimensione `5`) su tutte le facce in Face Mode e seleziona una faccia **solo cliccando sull'handle centrale** (`Click`, `⇧+Click` toggle, `⌃+Click` deseleziona). Isola inoltre l'evidenziazione al solo componente attivo (`Vert`/`Edge`/`Face`) e disegna **più grandi solo i vertici selezionati** (`6 px` predefinito). |
 | **Poly Count & Subdiv HUD** | Contatore Maya in alto a sinistra nella viewport (**Scena \| Oggetti Selezionati \| Componenti Selezionati**) per `Verts`, `Edges`, `Faces`, `Tris`, `UVs` + livello e modalità Subdiv. Nasconde automaticamente le scritte sovrapposte di Blender (`User Perspective / Cube`). |
 | **Top Shelf (4 Menu Set)** | Barra rapida nell'header della 3D Viewport con tab **`Display` \| `Poly` \| `Retopo` \| `LookDev`**, badge **`EDIT PIVOT`** e **`LIVE`**, e pulsante **`HUD`**. |
+| **Maya Extrude Pro (`⌘+E` / `Ctrl+E`)** | Comando `Edit Mesh > Extrude` completo per **Facce**, **Edge**, **Vertici** (`Length` / `Width` / `Divisions`) ed **Estrusione su Curva** con **`Thickness`**, **`Local / World Translate`**, **`Offset`**, **`Divisions`**, **`Keep Faces Together`** (`⌘+⇧+E` / `Ctrl+Shift+E`), **`Taper`**, **`Twist`** e **Show Manipulator**. |
 | **Retopo & Target Weld Pro** | **`Target Weld`** interattivo con anteprima GPU; **`Make Live`** + **`Quad Draw`** (Shrinkwrap + Mirror + Poly Build) + **`Relax`** + **`Bake`**. |
 | **Smooth Mesh Preview (`1`/`2`/`3`)** | **`1`** gabbia grezza, **`2`** subdiv + gabbia, **`3`** smooth (`PgUp`/`PgDn` regola i livelli). |
 | **CamTools Pro & LookDev** | **`Cam from View`**, Lock Camera, preset `24/35/50/85mm`, `Fix Clip`, DoF, Passepartout, Guide composizione, 4 Camera Bookmarks; materiali **`lambert1`**, **`blinn1`**, **`maya_clay`**, **`maya_chrome`**, **`maya_uv_checker`**, **`maya_glass`** + **`3-Point Studio Lights`**. |
