@@ -1126,7 +1126,13 @@ class MAYA_UX_OT_ortho_select_box(bpy.types.Operator):
         self._region = region
         px = getattr(event, "mouse_prev_press_x", None)
         py = getattr(event, "mouse_prev_press_y", None)
-        if px is not None and py is not None:
+        if (
+            px is not None
+            and py is not None
+            and (px or py)
+            and region.x <= px <= region.x + region.width
+            and region.y <= py <= region.y + region.height
+        ):
             self._start_x = float(px - region.x)
             self._start_y = float(py - region.y)
         else:

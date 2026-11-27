@@ -755,6 +755,8 @@ def test_selection_pickwalk_soft_and_delete():
 
     box_kms = [kmi for km, kmi in keymap.addon_keymaps if km.name == "3D View Tool: Select Box" and kmi.idname == "maya_ux.ortho_select_box"]
     assert len(box_kms) == 4
+    box_fb_kms = [kmi for km, kmi in keymap.addon_keymaps if km.name == "3D View Tool: Select Box (fallback)" and kmi.idname == "maya_ux.ortho_select_box"]
+    assert len(box_fb_kms) == 4
     click_kms = [kmi for km, kmi in keymap.addon_keymaps if km.name == "Mesh" and kmi.idname == "maya_ux.ortho_select_click"]
     assert len(click_kms) == 3
 

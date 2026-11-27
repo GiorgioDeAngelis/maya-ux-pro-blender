@@ -2,6 +2,10 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.6.1] - 2026-11-27
+### Fixed
+- **Orthographic Select-Through with `Move (W)` / `Rotate (E)` / `Scale (R)` / `Transform (T)` Active**: bound `maya_ux.ortho_select_box` to `3D View Tool: Select Box (fallback)` in addition to `3D View Tool: Select Box`, so dragging a box selection in Ortho views works with Select-Through regardless of whether `Select Box (Q)` or a transform gizmo tool (`W/E/R/T`) is active, and hardened Quad View marquee start coordinates.
+
 ## [2.6.0] - 2026-11-27
 ### Added
 - **Orthographic Select-Through in Shaded Mode (`ops_selection.py`, `preferences.py`, `keymap.py`)**:

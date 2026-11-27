@@ -444,19 +444,20 @@ def register_keymaps():
             )
 
         if getattr(prefs, "ortho_select_through", True):
-            km_sel_box = kc.keymaps.new(name="3D View Tool: Select Box", space_type="VIEW_3D", region_type="WINDOW")
-            _add_kmi(km_sel_box, "maya_ux.ortho_select_box", "LEFTMOUSE", value="CLICK_DRAG", props={"mode": "SET"})
-            _add_kmi(km_sel_box, "maya_ux.ortho_select_box", "LEFTMOUSE", value="CLICK_DRAG", shift=True, props={"mode": "ADD"})
-            _add_kmi(km_sel_box, "maya_ux.ortho_select_box", "LEFTMOUSE", value="CLICK_DRAG", ctrl=True, props={"mode": "SUB"})
-            _add_kmi(
-                km_sel_box,
-                "maya_ux.ortho_select_box",
-                "LEFTMOUSE",
-                value="CLICK_DRAG",
-                shift=True,
-                ctrl=True,
-                props={"mode": "SUB"},
-            )
+            for tool_km_name in ("3D View Tool: Select Box", "3D View Tool: Select Box (fallback)"):
+                km_sel_box = kc.keymaps.new(name=tool_km_name, space_type="VIEW_3D", region_type="WINDOW")
+                _add_kmi(km_sel_box, "maya_ux.ortho_select_box", "LEFTMOUSE", value="CLICK_DRAG", props={"mode": "SET"})
+                _add_kmi(km_sel_box, "maya_ux.ortho_select_box", "LEFTMOUSE", value="CLICK_DRAG", shift=True, props={"mode": "ADD"})
+                _add_kmi(km_sel_box, "maya_ux.ortho_select_box", "LEFTMOUSE", value="CLICK_DRAG", ctrl=True, props={"mode": "SUB"})
+                _add_kmi(
+                    km_sel_box,
+                    "maya_ux.ortho_select_box",
+                    "LEFTMOUSE",
+                    value="CLICK_DRAG",
+                    shift=True,
+                    ctrl=True,
+                    props={"mode": "SUB"},
+                )
             _add_kmi(km_mesh, "maya_ux.ortho_select_click", "LEFTMOUSE", value="CLICK", props={"toggle": False, "deselect": False})
             _add_kmi(
                 km_mesh,
