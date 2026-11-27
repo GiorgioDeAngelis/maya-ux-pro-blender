@@ -2,6 +2,13 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.8.3] - 2026-11-27
+### Fixed
+- **Maya Extrude 3D Show Manipulator rebuilt on Blender native `transform.*` operators (`ops_extrude.py`)**:
+  - Replaced Python `target_set_handler("offset", ...)` callbacks and custom modal cube handlers with direct C++ operator bindings (`target_set_operator("transform.translate" / "transform.resize" / "transform.rotate" / "transform.shrink_fatten")` with `release_confirm = True`), matching Blender's own Move/Rotate/Scale tools.
+  - Eliminated the bug where dragging handles slid arrow heads into empty space and left them floating off the mesh without deforming the geometry reliably; all arrows, scale cubes, center uniform scale, and twist ring now stay locked onto the active selection and support native `Shift` precision, `Ctrl` snap, numeric keyboard input, `RMB`/`Esc` cancel, and Blender Undo.
+  - Dynamically switches the Blue Normal arrow between `transform.translate` (exact `NORMAL`/`GLOBAL` axis push on single/coplanar faces) and `transform.shrink_fatten` (`use_even_offset=True` on diverging multi-face islands/rings), and switches Blue `SCALE_Z` to in-plane `(True, True, False)` on planar caps.
+
 ## [2.8.2] - 2026-11-27
 ### Fixed
 - **Maya Extrude 3D Show Manipulator rebuilt on Blender native C++ gizmos (`ops_extrude.py`)**:

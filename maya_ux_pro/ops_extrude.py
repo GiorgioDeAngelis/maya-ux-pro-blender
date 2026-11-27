@@ -1676,65 +1676,37 @@ class MAYA_UX_OT_cleanup_extrude(bpy.types.Operator):
         return {"FINISHED"}
 
 
-def _gizmo_drag_invoke(self, context, event):
-    """Native Gizmo invoke: start dragging this handle (Blender gizmo tweak loop delivers modal events)."""
-    state = begin_extrude_drag(context, getattr(self, "drag_mode", "AUTO_Z"), event.mouse_region_x, event.mouse_region_y)
-    if state is None:
-        return {"CANCELLED"}
-    self.drag_state = state
-    _extrude_drag_header(context, state)
-    return {"RUNNING_MODAL"}
-
-
-def _gizmo_drag_modal(self, context, event, tweak):
-    """Native Gizmo modal: deform the extruded components while the mouse moves."""
-    state = getattr(self, "drag_state", None)
-    if state is None:
-        return {"CANCELLED"}
-    update_extrude_drag(
-        state,
-        event.mouse_region_x,
-        event.mouse_region_y,
-        precise="PRECISE" in tweak,
-        snap="SNAP" in tweak,
-    )
-    _extrude_drag_header(context, state)
-    if context.area is not None:
-        context.area.tag_redraw()
-    return {"RUNNING_MODAL"}
-
-
-def _gizmo_drag_exit(self, context, cancel):
-    """Native Gizmo exit: restore on cancel, otherwise push an undo step."""
-    state = getattr(self, "drag_state", None)
-    self.drag_state = None
-    if is_extrude_session_active():
-        sp = getattr(getattr(context, "scene", None), "maya_ux_extrude_space", "LOCAL")
-        _set_view3d_header_text(context, _extrude_session_header(sp))
+def _extrude_selection_flags(context, pivot: Vector, rot4: Matrix) -> tuple[bool, bool]:
+    """Return (use_shrink_fatten, is_planar_z) for the active Edit Mesh selection."""
+    obj = getattr(context, "edit_object", None) or getattr(context, "active_object", None)
+    if obj is None or obj.type != "MESH" or obj.data is None:
+        return False, False
+    bm = bmesh.from_edit_mesh(obj.data)
+    comp_mode = detect_extrude_component(context, bm)
+    is_local = getattr(context.scene, "maya_ux_extrude_space", "LOCAL") == "LOCAL"
+    if comp_mode == "FACE":
+        sel_faces = [f for f in bm.faces if f.select and not f.hide]
+        sum_len = sum((f.normal for f in sel_faces), Vector((0.0, 0.0, 0.0))).length
+        tot_len = sum(f.normal.length for f in sel_faces)
+        use_shrink = bool(is_local and len(sel_faces) >= 2 and tot_len > 1e-6 and sum_len < 0.85 * tot_len)
+        sel_verts = list({v for f in sel_faces for v in f.verts})
+    elif comp_mode == "EDGE":
+        use_shrink = False
+        sel_edges = [e for e in bm.edges if e.select and not e.hide]
+        sel_verts = list({v for e in sel_edges for v in e.verts})
     else:
-        _extrude_drag_header(context, None)
-    if state is None:
-        return
-    if cancel:
-        set_extrude_drag_amount(state, 0.0)
-    elif abs(state.get("amount", 0.0)) > 1e-9:
-        try:
-            bpy.ops.ed.undo_push(message=f"Maya Extrude {_EXTRUDE_DRAG_LABELS.get(state['mode'], 'Handle')}")
-        except (RuntimeError, TypeError):
-            pass
-    if context.area is not None:
-        context.area.tag_redraw()
+        use_shrink = False
+        sel_verts = [v for v in bm.verts if v.select and not v.hide]
+    mw = obj.matrix_world
+    rot_inv = rot4.to_3x3().inverted_safe()
+    is_planar_z = bool(sel_verts) and max(abs((rot_inv @ ((mw @ v.co) - pivot)).z) for v in sel_verts) <= 1e-4
+    return use_shrink, is_planar_z
 
 
 class VIEW3D_GT_maya_extrude_box(bpy.types.Gizmo):
-    """Cube handle for Maya Extrude Uniform Scale (native drag)."""
+    """Cube handle for Maya Extrude Uniform Scale."""
 
     bl_idname = "VIEW3D_GT_maya_extrude_box"
-    __slots__ = ("drag_mode", "drag_state")
-
-    invoke = _gizmo_drag_invoke
-    modal = _gizmo_drag_modal
-    exit = _gizmo_drag_exit
 
     def draw(self, context):
         self.draw_preset_box(self.matrix_world @ Matrix.Scale(0.09, 4))
@@ -1756,7 +1728,7 @@ class VIEW3D_GT_maya_extrude_button(bpy.types.Gizmo):
 
 
 class VIEW3D_GGT_maya_extrude(bpy.types.GizmoGroup):
-    """Native 3D Maya Extrude Show Manipulator active exclusively during an Extrude session."""
+    """Native 3D Maya Extrude Show Manipulator powered by Blender C++ transform operators."""
 
     bl_idname = "VIEW3D_GGT_maya_extrude"
     bl_label = "Maya Extrude Show Manipulator"
@@ -1775,69 +1747,10 @@ class VIEW3D_GGT_maya_extrude(bpy.types.GizmoGroup):
         space = ops_viewport._get_view3d_space(context)
         return space is not None and space.type == "VIEW_3D" and bool(space.show_gizmo)
 
-    def _bind_native_offset_handler(self, gz, drag_mode: str, is_scale: bool = False, is_twist: bool = False):
-        def get_cb():
-            drag = getattr(self, "_native_drag", None)
-            if drag is not None and drag["gz"] == gz and gz.is_modal:
-                return drag["raw_val"]
-            return 0.0
-
-        def set_cb(value):
-            ctx = bpy.context
-            drag = getattr(self, "_native_drag", None)
-            if drag is None or drag["gz"] != gz:
-                state = begin_extrude_drag(ctx, drag_mode, 0.0, 0.0)
-                if state is None:
-                    return
-                axis_vec = _EXTRUDE_DRAG_AXES.get(drag_mode, Vector((0.0, 0.0, 1.0)))
-                local_col = state["snapshot"][0]["basis"] @ axis_vec
-                axis_world_scale = max(1e-4, (state["obj"].matrix_world.to_3x3() @ local_col).length)
-                scale_ref = max(0.5, gz.matrix_world.to_scale().x * 1.45)
-                drag = {
-                    "gz": gz,
-                    "state": state,
-                    "raw_val": 0.0,
-                    "axis_world_scale": axis_world_scale,
-                    "scale_ref": scale_ref,
-                    "is_scale": is_scale,
-                    "is_twist": is_twist,
-                }
-                self._native_drag = drag
-
-            val = float(value)
-            drag["raw_val"] = val
-            if drag["is_twist"]:
-                amount = val
-            elif drag["is_scale"]:
-                amount = max(-0.99, val / drag["scale_ref"])
-            else:
-                amount = val / drag["axis_world_scale"]
-
-            set_extrude_drag_amount(drag["state"], amount)
-            _extrude_drag_header(ctx, drag["state"])
-
-        gz.target_set_handler("offset", get=get_cb, set=set_cb)
-
-    def _finish_native_drag_if_ended(self, context):
-        drag = getattr(self, "_native_drag", None)
-        if drag is None or drag["gz"].is_modal:
-            return
-        self._native_drag = None
-        if is_extrude_session_active():
-            sp = getattr(getattr(context, "scene", None), "maya_ux_extrude_space", "LOCAL")
-            _set_view3d_header_text(context, _extrude_session_header(sp))
-        else:
-            _set_view3d_header_text(context, None)
-        if abs(drag["state"].get("amount", 0.0)) > 1e-9:
-            try:
-                bpy.ops.ed.undo_push(message=f"Maya Extrude {_EXTRUDE_DRAG_LABELS.get(drag['state']['mode'], 'Handle')}")
-            except (RuntimeError, TypeError):
-                pass
-
-    def _new_native_arrow(
+    def _new_arrow(
         self,
         color,
-        drag_mode: str,
+        op_idname: str,
         rot_offset: Matrix,
         *,
         draw_style: str,
@@ -1846,7 +1759,8 @@ class VIEW3D_GGT_maya_extrude(bpy.types.GizmoGroup):
         scale_basis: float,
         line_width: float,
         select_bias: float,
-        is_scale: bool,
+        constraint_axis: tuple[bool, bool, bool] | None = None,
+        use_even_offset: bool = False,
     ):
         gz = self.gizmos.new("GIZMO_GT_arrow_3d")
         gz.draw_style = draw_style
@@ -1858,17 +1772,24 @@ class VIEW3D_GGT_maya_extrude(bpy.types.GizmoGroup):
         gz.alpha_highlight = 1.0
         gz.use_draw_scale = True
         gz.use_draw_modal = True
-        gz.use_draw_value = True
+        gz.use_draw_value = False
         gz.scale_basis = scale_basis
         gz.line_width = line_width
         gz.select_bias = select_bias
-        self._bind_native_offset_handler(gz, drag_mode, is_scale=is_scale)
+        op = gz.target_set_operator(op_idname)
+        op.release_confirm = True
+        if constraint_axis is not None:
+            op.constraint_axis = constraint_axis
+            op.orient_type = "NORMAL"
+            self._orient_ops.append(op)
+        if use_even_offset and hasattr(op, "use_even_offset"):
+            op.use_even_offset = True
         self._rot_offsets[gz] = rot_offset
-        return gz
+        return gz, op
 
     def setup(self, context):
-        self._native_drag = None
         self._rot_offsets = {}
+        self._orient_ops = []
         rot_x = Matrix.Rotation(math.radians(90.0), 4, "Y")
         rot_y = Matrix.Rotation(math.radians(-90.0), 4, "X")
         rot_id = Matrix.Identity(4)
@@ -1882,40 +1803,55 @@ class VIEW3D_GGT_maya_extrude(bpy.types.GizmoGroup):
         gz_twist.alpha_highlight = 1.0
         gz_twist.use_draw_scale = True
         gz_twist.use_draw_modal = True
-        gz_twist.use_draw_value = True
+        gz_twist.use_draw_value = False
         gz_twist.scale_basis = 1.25
         gz_twist.line_width = 2.0
         gz_twist.select_bias = -4.0
-        self._bind_native_offset_handler(gz_twist, "TWIST", is_twist=True)
+        op_twist = gz_twist.target_set_operator("transform.rotate")
+        op_twist.constraint_axis = (False, False, True)
+        op_twist.orient_type = "NORMAL"
+        op_twist.release_confirm = True
+        self._orient_ops.append(op_twist)
         self._rot_offsets[gz_twist] = rot_id
         self.gz_twist = gz_twist
 
         # 2. Axis Scale Handles (BOX style, compact length=0.56 with select_bias=8.5 above arrows)
-        self.gz_scale_x = self._new_native_arrow(
-            (0.95, 0.25, 0.25), "SCALE_X", rot_x,
-            draw_style="BOX", draw_options=set(), length=0.56, scale_basis=1.0, line_width=2.0, select_bias=8.5, is_scale=True,
+        self.gz_scale_x, _ = self._new_arrow(
+            (0.95, 0.25, 0.25), "transform.resize", rot_x,
+            draw_style="BOX", draw_options=set(), length=0.56, scale_basis=1.0, line_width=2.0, select_bias=8.5,
+            constraint_axis=(True, False, False),
         )
-        self.gz_scale_y = self._new_native_arrow(
-            (0.25, 0.90, 0.35), "SCALE_Y", rot_y,
-            draw_style="BOX", draw_options=set(), length=0.56, scale_basis=1.0, line_width=2.0, select_bias=8.5, is_scale=True,
+        self.gz_scale_y, _ = self._new_arrow(
+            (0.25, 0.90, 0.35), "transform.resize", rot_y,
+            draw_style="BOX", draw_options=set(), length=0.56, scale_basis=1.0, line_width=2.0, select_bias=8.5,
+            constraint_axis=(False, True, False),
         )
-        self.gz_scale_z = self._new_native_arrow(
-            (0.20, 0.58, 1.0), "SCALE_Z", rot_id,
-            draw_style="BOX", draw_options=set(), length=0.56, scale_basis=1.0, line_width=2.0, select_bias=8.5, is_scale=True,
+        self.gz_scale_z, self._op_scale_z = self._new_arrow(
+            (0.20, 0.58, 1.0), "transform.resize", rot_id,
+            draw_style="BOX", draw_options=set(), length=0.56, scale_basis=1.0, line_width=2.0, select_bias=8.5,
+            constraint_axis=(False, False, True),
         )
 
         # 3. Normal / Move Arrows (extend well beyond scale handles & twist dial)
-        self.gz_move_x = self._new_native_arrow(
-            (0.95, 0.25, 0.25), "MOVE_X", rot_x,
-            draw_style="NORMAL", draw_options={"STEM"}, length=1.30, scale_basis=1.0, line_width=3.0, select_bias=5.5, is_scale=False,
+        self.gz_move_x, _ = self._new_arrow(
+            (0.95, 0.25, 0.25), "transform.translate", rot_x,
+            draw_style="NORMAL", draw_options={"STEM"}, length=1.30, scale_basis=1.0, line_width=3.0, select_bias=5.5,
+            constraint_axis=(True, False, False),
         )
-        self.gz_move_y = self._new_native_arrow(
-            (0.25, 0.90, 0.35), "MOVE_Y", rot_y,
-            draw_style="NORMAL", draw_options={"STEM"}, length=1.30, scale_basis=1.0, line_width=3.0, select_bias=5.5, is_scale=False,
+        self.gz_move_y, _ = self._new_arrow(
+            (0.25, 0.90, 0.35), "transform.translate", rot_y,
+            draw_style="NORMAL", draw_options={"STEM"}, length=1.30, scale_basis=1.0, line_width=3.0, select_bias=5.5,
+            constraint_axis=(False, True, False),
         )
-        self.gz_move_z = self._new_native_arrow(
-            (0.20, 0.58, 1.0), "AUTO_Z", rot_id,
-            draw_style="NORMAL", draw_options={"STEM"}, length=1.45, scale_basis=1.0, line_width=3.0, select_bias=6.0, is_scale=False,
+        self.gz_move_z, _ = self._new_arrow(
+            (0.20, 0.58, 1.0), "transform.translate", rot_id,
+            draw_style="NORMAL", draw_options={"STEM"}, length=1.45, scale_basis=1.0, line_width=3.0, select_bias=6.0,
+            constraint_axis=(False, False, True),
+        )
+        self.gz_move_z_shrink, _ = self._new_arrow(
+            (0.20, 0.58, 1.0), "transform.shrink_fatten", rot_id,
+            draw_style="NORMAL", draw_options={"STEM"}, length=1.45, scale_basis=1.0, line_width=3.0, select_bias=6.0,
+            use_even_offset=True,
         )
 
         # 4. Center Uniform Scale Cube (bias=10.0 above arrows & scale handles at center)
@@ -1927,10 +1863,14 @@ class VIEW3D_GGT_maya_extrude(bpy.types.GizmoGroup):
         gz_center.use_draw_scale = True
         gz_center.use_draw_offset_scale = True
         gz_center.use_draw_modal = True
+        gz_center.use_draw_value = False
         gz_center.scale_basis = 1.0
         gz_center.select_bias = 10.0
-        gz_center.drag_mode = "UNIFORM_SCALE"
-        gz_center.drag_state = None
+        op_center = gz_center.target_set_operator("transform.resize")
+        op_center.constraint_axis = (False, False, False)
+        op_center.orient_type = "NORMAL"
+        op_center.release_confirm = True
+        self._orient_ops.append(op_center)
         self._rot_offsets[gz_center] = rot_id
         self.gz_scale_center = gz_center
 
@@ -1942,6 +1882,7 @@ class VIEW3D_GGT_maya_extrude(bpy.types.GizmoGroup):
         gz_sw.alpha_highlight = 1.0
         gz_sw.use_draw_scale = True
         gz_sw.use_draw_offset_scale = True
+        gz_sw.use_draw_value = False
         gz_sw.scale_basis = 1.0
         gz_sw.line_width = 3.0
         gz_sw.select_bias = 12.0
@@ -1953,23 +1894,37 @@ class VIEW3D_GGT_maya_extrude(bpy.types.GizmoGroup):
         self._update_gizmos(context)
 
     def _update_gizmos(self, context):
-        self._finish_native_drag_if_ended(context)
         all_gz = tuple(self._rot_offsets.keys())
-        if any(gz.is_modal for gz in all_gz):
-            return
         pivot, rot4 = _compute_extrude_manipulator_matrix(context)
         if pivot is None:
             for gz in all_gz:
                 gz.hide = True
                 gz.hide_select = True
             return
-        mat = Matrix.Translation(pivot) @ rot4
+
+        use_shrink, is_planar_z = _extrude_selection_flags(context, pivot, rot4)
         is_local = getattr(context.scene, "maya_ux_extrude_space", "LOCAL") == "LOCAL"
+        orient_type = "NORMAL" if is_local else "GLOBAL"
+        rot3 = rot4.to_3x3()
+
+        for op in self._orient_ops:
+            op.orient_type = orient_type
+            if hasattr(op, "orient_matrix_type"):
+                op.orient_matrix_type = orient_type
+            op.orient_matrix = rot3
+        self._op_scale_z.constraint_axis = (True, True, False) if is_planar_z else (False, False, True)
+
+        mat = Matrix.Translation(pivot) @ rot4
         self.gz_space_btn.color = (0.35, 0.88, 0.98) if is_local else (1.0, 0.58, 0.18)
         for gz, rot_off in self._rot_offsets.items():
             gz.hide = False
             gz.hide_select = False
             gz.matrix_basis = mat @ rot_off
+
+        self.gz_move_z.hide = use_shrink
+        self.gz_move_z.hide_select = use_shrink
+        self.gz_move_z_shrink.hide = not use_shrink
+        self.gz_move_z_shrink.hide_select = not use_shrink
 
     def refresh(self, context):
         self._update_gizmos(context)

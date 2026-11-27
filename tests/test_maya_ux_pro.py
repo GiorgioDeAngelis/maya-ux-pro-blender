@@ -1894,14 +1894,14 @@ def test_maya_extrude_pro():
     assert abs(max(xs_sc) - 1.5) < 1e-4 and abs(min(xs_sc) + 1.5) < 1e-4
     assert all(f.calc_area() < 1.5 for f in bm_sc_check.faces if f.select)
 
-    # v2.8.2: center cube drags via Gizmo invoke/modal/exit; arrows & twist dial use native C++ GIZMO_GT_arrow_3d / GIZMO_GT_dial_3d
-    assert (
-        callable(ops_extrude.VIEW3D_GT_maya_extrude_box.__dict__.get("invoke"))
-        and callable(ops_extrude.VIEW3D_GT_maya_extrude_box.__dict__.get("modal"))
-        and callable(ops_extrude.VIEW3D_GT_maya_extrude_box.__dict__.get("exit"))
-    )
+    # v2.8.3: VIEW3D_GGT_maya_extrude binds native transform.* operators directly on each handle (no custom invoke/modal)
+    assert "bl_rna" in ops_extrude.VIEW3D_GT_maya_extrude_box.__dict__
+    assert "invoke" not in ops_extrude.VIEW3D_GT_maya_extrude_box.__dict__
     assert "invoke" not in ops_extrude.VIEW3D_GT_maya_extrude_button.__dict__
     assert "bl_rna" in ops_extrude.VIEW3D_GT_maya_extrude_button.__dict__
+
+    piv_opp, rot_opp = ops_extrude._compute_extrude_manipulator_matrix(bpy.context)
+    assert piv_opp is not None and ops_extrude._extrude_selection_flags(bpy.context, piv_opp, rot_opp) == (True, False)
 
     # Delayed msgbus context callback must NOT kill active session when select mode hasn't changed
     ops_extrude._on_extrude_context_change()
@@ -1963,6 +1963,8 @@ def test_maya_extrude_pro():
     bm_g_check = bmesh.from_edit_mesh(cube_grid.data)
     top_sel = [f for f in bm_g_check.faces if f.select]
     assert len(top_sel) == 9 and all(abs(f.calc_center_median().z - 1.3) < 1e-4 for f in top_sel)
+    piv_g, rot_g = ops_extrude._compute_extrude_manipulator_matrix(bpy.context)
+    assert piv_g is not None and ops_extrude._extrude_selection_flags(bpy.context, piv_g, rot_g) == (False, True)
 
     # Cleanup accidental zero-thickness double extrude
     cube_dbl = _reset_scene()
