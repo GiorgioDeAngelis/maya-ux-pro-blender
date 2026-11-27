@@ -5,7 +5,7 @@
 **Authentic Autodesk Maya workflow inside Blender 4.2 – 5.3+ — Spacebar Floating Hotbox, Smart Middle-Mouse Transform, Face Center-Only Selection, Poly Count HUD, Hold-`D` Pivot & Snap, Retopo & CamTools Pro.**
 
 [![Blender](https://img.shields.io/badge/Blender-4.2%20--%205.3%2B-orange?logo=blender)](https://www.blender.org/)
-[![Version](https://img.shields.io/badge/Release-v2.6.2-blue)](https://github.com/GiorgioDeAngelis/maya-ux-pro-blender/releases/latest)
+[![Version](https://img.shields.io/badge/Release-v2.6.3-blue)](https://github.com/GiorgioDeAngelis/maya-ux-pro-blender/releases/latest)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-green.svg)](./LICENSE)
 [![Platforms](https://img.shields.io/badge/OS-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](#platform-profiles-macos--windowslinux)
 [![Tests](https://img.shields.io/badge/Headless%20Tests-16%2F16%20Passing-brightgreen)](./CONTRIBUTING.md)
@@ -27,12 +27,12 @@ Switching from Autodesk Maya to Blender is slowed down by more than a few keybin
 ## Quick Installation (30 Seconds)
 
 ### Option A — Drag & Drop (Easiest, Blender 4.2+)
-1. Download **`maya_ux_pro-2.6.2.zip`** from the [**Latest GitHub Release**](https://github.com/GiorgioDeAngelis/maya-ux-pro-blender/releases/latest/download/maya_ux_pro-2.6.2.zip).
+1. Download **`maya_ux_pro-2.6.3.zip`** from the [**Latest GitHub Release**](https://github.com/GiorgioDeAngelis/maya-ux-pro-blender/releases/latest/download/maya_ux_pro-2.6.3.zip).
 2. Open Blender and **drag & drop** the `.zip` file directly into the Blender window.
 3. Click **OK** in the install dialog — the extension enables automatically.
 
 ### Option B — Install from Disk
-1. Download `maya_ux_pro-2.6.2.zip` from [Releases](https://github.com/GiorgioDeAngelis/maya-ux-pro-blender/releases/latest).
+1. Download `maya_ux_pro-2.6.3.zip` from [Releases](https://github.com/GiorgioDeAngelis/maya-ux-pro-blender/releases/latest).
 2. In Blender open **Edit → Preferences → Get Extensions** (top-right `⌄` menu) → **Install from Disk...**.
 3. Select the downloaded `.zip` and ensure **Maya UX Pro** is checked.
 
@@ -53,7 +53,7 @@ Switching from Autodesk Maya to Blender is slowed down by more than a few keybin
 | **Smart Middle Mouse (MMB)** | Empty selection or `Q` (Select): **MMB drags to Pan**. With `W` / `E` / `R` / `T` active on **Objects OR Edit Mode Vertices / Edges / Faces**: **MMB drags globally (or along last gizmo axis)** — plus **`V+MMB`** / **`C+MMB`** direct vertex/edge snap! |
 | **Maya Zoom & Mac Trackpad** | Maya-inverted mouse dolly (`Pull back = Zoom In`), **`⌥+Click`** Orbit, **`⌥+⇧+Click`** / **`MMB`** Pan, **`⌥+RMB`** / **`⌥+⌃+Click`** Zoom, plus native 2-finger Trackpad & Pinch gestures, and **`[` / `]`** Camera Undo/Redo. |
 | **Hold-`D` Edit Pivot & Snap** | Hold **`D`** to edit object origin directly (`D+V` snap pivot to vertex, `D+C` to edge, `D+X` to grid). Hold **`X` / `C` / `V` / `J`** for temporary Grid / Edge / Vertex / Discrete snap. **`⌥+D`** opens Pivot Marking Menu. |
-| **Face Center-Only Selection** | Displays crisp Maya-style center dot handles on polygons (`show_face_center = True`, size `5`). In Face Mode, faces are selected **only when clicking their center handle** (`Click`, `⇧+Click` toggle, `⌃+Click` deselect). |
+| **Face Center-Only Selection** | Displays crisp Maya-style center dot handles on polygons (`show_face_center = True`, size `5`). In Face Mode, faces are selected **only when clicking their center handle** (`Click`, `⇧+Click` toggle, `⌃+Click` deselect). Also isolates active component highlights (`Vert`/`Edge`/`Face`) and draws **selected vertices larger** (`6 px` default) while keeping unselected vertices subtle. |
 | **Maya Poly Count & Subdiv HUD** | Live top-left 3-column viewport counter (**Scene \| Selected Objects \| Selected Components**) for `Verts`, `Edges`, `Faces`, `Tris`, `UVs`, plus `Subdiv current level` & `Subdiv mode`. Auto-hides Blender's overlapping Text Info overlay. |
 | **Top Shelf (4 Menu Sets)** | Compact viewport header bar with **`Display` \| `Poly` \| `Retopo` \| `LookDev`** tabs, live **`EDIT PIVOT`** & **`LIVE`** status badges, and 1-click **`HUD`** toggle. |
 | **Retopology & Target Weld Pro** | **`Target Weld`** interactive modal tool with GPU highlight overlay; **`Make Live`** + **`Quad Draw`** (Shrinkwrap + Mirror + X-Ray Retopo + Poly Build) + **`Relax`** + **`Bake`**. |

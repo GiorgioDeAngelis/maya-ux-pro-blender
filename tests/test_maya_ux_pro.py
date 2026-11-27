@@ -800,7 +800,31 @@ def test_selection_pickwalk_soft_and_delete():
     assert tuple(round(float(c), 4) for c in v3d_t.edge_select[:3]) != wire_rgb
     assert v3d_t.face_select[3] > 0.05 and v3d_t.editmesh_active[3] > 0.05
 
+    # Enlarged Selected Vertices overlay & helper checks (v2.6.3)
+    assert preferences.get_prefs().enlarge_selected_vertices is True
+    assert preferences.get_prefs().selected_vertex_size == 6.0
+    assert ops_selection._SELECTED_VERT_DRAW_HANDLE is not None
+
+    assert bpy.ops.maya_ux.component_mode(mode="VERT") == {"FINISHED"}
+    bm_sv = bmesh.from_edit_mesh(ortho_cube.data)
+    bm_sv.verts.ensure_lookup_table()
+    for grp in (bm_sv.verts, bm_sv.edges, bm_sv.faces):
+        for el in grp:
+            el.select = False
+    bm_sv.select_history.clear()
+    bm_sv.verts[0].select = True
+    bm_sv.verts[1].select = True
+    bm_sv.select_history.add(bm_sv.verts[1])
+    bm_sv.select_flush_mode()
+    bmesh.update_edit_mesh(ortho_cube.data)
+    pts_sel, act_pt = ops_selection.collect_selected_vertex_world_coords(bpy.context)
+    assert len(pts_sel) == 1 and act_pt is not None
+
+    assert bpy.ops.maya_ux.component_mode(mode="FACE") == {"FINISHED"}
+    assert ops_selection.collect_selected_vertex_world_coords(bpy.context) == ([], None)
+
     assert bpy.ops.maya_ux.component_mode(mode="OBJECT") == {"FINISHED"}
+    assert ops_selection.collect_selected_vertex_world_coords(bpy.context) == ([], None)
     assert tuple(round(float(c), 4) for c in v3d_t.edge_select[:3]) != wire_rgb
     assert v3d_t.face_select[3] > 0.05 and v3d_t.editmesh_active[3] > 0.05
     print("[PASS] selection_pickwalk_soft_and_delete")
@@ -1473,6 +1497,7 @@ def test_unregistration():
     from maya_ux_pro import ops_selection, ops_startup, ui_poly_hud
 
     maya_ux_pro.unregister()
+    assert ops_selection._SELECTED_VERT_DRAW_HANDLE is None
     assert ops_selection._on_component_display_depsgraph not in bpy.app.handlers.depsgraph_update_post
     assert len(ops_selection._SAVED_COMPONENT_COLORS) == 0
     assert len(ops_selection._GROW_HISTORY) == 0

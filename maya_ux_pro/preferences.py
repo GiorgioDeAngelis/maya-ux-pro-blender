@@ -54,6 +54,12 @@ def _on_component_display_update(self, context):
     ops_selection.sync_component_selection_display(context, force=True)
 
 
+def _on_selected_vert_size_update(self, context):
+    from . import ops_selection
+
+    ops_selection._tag_view3d_redraw(context or bpy.context)
+
+
 def is_macos_layout(context=None) -> bool:
     """Return True when macOS / MacBook Pro keyboard & Trackpad layout is active."""
     prefs = get_prefs(context)
@@ -336,6 +342,21 @@ class MayaUXPreferences(bpy.types.AddonPreferences):
         default=True,
         update=_on_component_display_update,
     )
+    enlarge_selected_vertices: BoolProperty(
+        name="Enlarge Selected Vertices",
+        description="Draw only selected vertices larger in Edit Mode so they stand out clearly against unselected vertices",
+        default=True,
+        update=_on_selected_vert_size_update,
+    )
+    selected_vertex_size: FloatProperty(
+        name="Selected Vertex Size (px)",
+        description="Display size (logical px) for selected vertices in the 3D Viewport",
+        default=6.0,
+        min=3.0,
+        max=16.0,
+        step=50,
+        update=_on_selected_vert_size_update,
+    )
 
     def draw(self, context):
         layout = self.layout
@@ -411,6 +432,9 @@ class MayaUXPreferences(bpy.types.AddonPreferences):
             beh_box.prop(self, "face_center_hit_radius")
         beh_box.prop(self, "ortho_select_through")
         beh_box.prop(self, "isolate_component_display")
+        beh_box.prop(self, "enlarge_selected_vertices")
+        if self.enlarge_selected_vertices:
+            beh_box.prop(self, "selected_vertex_size")
         beh_box.prop(self, "clean_empty_new_scene")
         beh_box.prop(self, "clean_maya_startup_layout")
 
@@ -454,6 +478,8 @@ _DEFAULT_PREFS = SimpleNamespace(
     face_center_hit_radius=10.0,
     ortho_select_through=True,
     isolate_component_display=True,
+    enlarge_selected_vertices=True,
+    selected_vertex_size=6.0,
 )
 
 

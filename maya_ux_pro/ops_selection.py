@@ -20,6 +20,7 @@ _EDGE_LOOP_ORIGIN: dict[str, dict] = {}
 _SAVED_COMPONENT_COLORS: dict[str, tuple] = {}
 _LAST_COMPONENT_DISPLAY_KEY: tuple | None = None
 _MSGBUS_OWNER = object()
+_SELECTED_VERT_DRAW_HANDLE = None
 _MAX_GROW_HISTORY = 64
 
 _DEFAULT_COMPONENT_FALLBACKS = {
@@ -142,6 +143,99 @@ def sync_component_selection_display(context=None, force: bool = False):
 @persistent
 def _on_component_display_depsgraph(scene, depsgraph=None):
     sync_component_selection_display(bpy.context)
+
+
+def collect_selected_vertex_world_coords(context) -> tuple[list[Vector], Vector | None]:
+    """Return world coordinates for selected Edit Mesh vertices, separating the active vertex."""
+    if getattr(context, "mode", "") != "EDIT_MESH":
+        return [], None
+    ts = getattr(context, "tool_settings", None)
+    if ts is None or not bool(ts.mesh_select_mode[0]):
+        return [], None
+
+    objs = [o for o in (getattr(context, "objects_in_mode_unique_data", None) or ()) if o.type == "MESH" and o.data is not None]
+    if not objs:
+        eo = getattr(context, "edit_object", None)
+        if eo is not None and eo.type == "MESH" and eo.data is not None:
+            objs = [eo]
+
+    pts: list[Vector] = []
+    active_pt: Vector | None = None
+    for obj in objs:
+        bm = bmesh.from_edit_mesh(obj.data)
+        mat = obj.matrix_world
+        act_elem = bm.select_history.active
+        active_vert = (
+            act_elem
+            if isinstance(act_elem, bmesh.types.BMVert) and act_elem.is_valid and act_elem.select and not act_elem.hide
+            else None
+        )
+        if active_vert is not None:
+            active_pt = mat @ active_vert.co
+        for v in bm.verts:
+            if v.select and not v.hide and v is not active_vert:
+                pts.append(mat @ v.co)
+    return pts, active_pt
+
+
+def _draw_selected_vertices_overlay():
+    """Draw only selected vertices larger in Edit Mode without affecting unselected vertex size."""
+    if bpy.app.background:
+        return
+    ctx = bpy.context
+    prefs = get_prefs(ctx)
+    if not bool(getattr(prefs, "enlarge_selected_vertices", True)):
+        return
+    space = getattr(ctx, "space_data", None)
+    rv3d = getattr(ctx, "region_data", None)
+    if space is None or rv3d is None or not getattr(space.overlay, "show_overlays", True):
+        return
+
+    pts, active_pt = collect_selected_vertex_world_coords(ctx)
+    if not pts and active_pt is None:
+        return
+
+    show_through = (
+        (getattr(rv3d, "view_perspective", "PERSP") == "ORTHO")
+        or (getattr(space.shading, "type", "SOLID") == "WIREFRAME")
+        or bool(getattr(space.shading, "show_xray", False))
+    )
+    if not show_through:
+        cam_pos = rv3d.view_matrix.inverted().translation
+        pts = [p + (cam_pos - p) * 0.0015 for p in pts]
+        if active_pt is not None:
+            active_pt = active_pt + (cam_pos - active_pt) * 0.0015
+
+    v3d = ctx.preferences.themes[0].view_3d
+    sel_rgba = (float(v3d.vertex_select[0]), float(v3d.vertex_select[1]), float(v3d.vertex_select[2]), 1.0)
+    act_rgba = (float(v3d.editmesh_active[0]), float(v3d.editmesh_active[1]), float(v3d.editmesh_active[2]), 1.0)
+    px_scale = max(1.0, float(getattr(ctx.preferences.system, "pixel_size", 1.0)))
+    pt_size = max(2.0, float(getattr(prefs, "selected_vertex_size", 6.0)) * px_scale)
+
+    try:
+        shader = gpu.shader.from_builtin("POINT_UNIFORM_COLOR")
+    except ValueError:
+        shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+
+    try:
+        gpu.state.blend_set("ALPHA")
+        gpu.state.depth_mask_set(False)
+        gpu.state.depth_test_set("NONE" if show_through else "LESS_EQUAL")
+        if pts:
+            gpu.state.point_size_set(pt_size)
+            shader.bind()
+            shader.uniform_float("color", sel_rgba)
+            batch_for_shader(shader, "POINTS", {"pos": pts}).draw(shader)
+        if active_pt is not None:
+            gpu.state.point_size_set(pt_size + px_scale)
+            shader.bind()
+            shader.uniform_float("color", act_rgba)
+            batch_for_shader(shader, "POINTS", {"pos": [active_pt]}).draw(shader)
+    finally:
+        gpu.state.point_size_set(1.0)
+        gpu.state.depth_test_set("NONE")
+        gpu.state.depth_mask_set(True)
+        gpu.state.blend_set("NONE")
 
 
 def is_ortho_component_view(context) -> bool:
@@ -1430,6 +1524,7 @@ CLASSES = (
 
 
 def register():
+    global _SELECTED_VERT_DRAW_HANDLE
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     sync_face_center_overlay(bool(getattr(get_prefs(), "maya_face_center_select", True)))
@@ -1447,10 +1542,19 @@ def register():
     )
     if _on_component_display_depsgraph not in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.append(_on_component_display_depsgraph)
+    if _SELECTED_VERT_DRAW_HANDLE is not None:
+        bpy.types.SpaceView3D.draw_handler_remove(_SELECTED_VERT_DRAW_HANDLE, "WINDOW")
+    _SELECTED_VERT_DRAW_HANDLE = bpy.types.SpaceView3D.draw_handler_add(
+        _draw_selected_vertices_overlay, (), "WINDOW", "POST_VIEW"
+    )
     sync_component_selection_display(force=True)
 
 
 def unregister():
+    global _SELECTED_VERT_DRAW_HANDLE
+    if _SELECTED_VERT_DRAW_HANDLE is not None:
+        bpy.types.SpaceView3D.draw_handler_remove(_SELECTED_VERT_DRAW_HANDLE, "WINDOW")
+        _SELECTED_VERT_DRAW_HANDLE = None
     bpy.msgbus.clear_by_owner(_MSGBUS_OWNER)
     if _on_component_display_depsgraph in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(_on_component_display_depsgraph)

@@ -2,6 +2,12 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.6.3] - 2026-11-27
+### Added
+- **Enlarged Selected Vertices Overlay (`ops_selection.py`, `preferences.py`)**:
+  - Added a GPU `POST_VIEW` viewport overlay (`POINT_UNIFORM_COLOR`) that renders **only selected vertices** larger (`6.0` logical px default, configurable `3.0–16.0` px via **Selected Vertex Size (px)** and toggleable via **Enlarge Selected Vertices** in Preferences), keeping unselected vertices at your compact theme size.
+  - Draws the active vertex slightly larger (`+1 px`) in crisp active highlight color (`editmesh_active` RGB) and automatically respects perspective surface depth occlusion while drawing front and hidden back selected vertices clearly in Orthographic, Wireframe, and X-Ray views.
+
 ## [2.6.2] - 2026-11-27
 ### Added
 - **Maya Isolated Component Selection Display (`ops_selection.py`, `preferences.py`, `ops_viewport.py`)**:
