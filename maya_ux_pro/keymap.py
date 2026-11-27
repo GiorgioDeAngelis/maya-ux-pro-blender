@@ -443,6 +443,10 @@ def register_keymaps():
                 props={"toggle": False, "deselect": True},
             )
 
+        _add_kmi(km_mesh, "maya_ux.edge_loop_double_click", "LEFTMOUSE", value="DOUBLE_CLICK", props={"toggle": False, "deselect": False})
+        _add_kmi(km_mesh, "maya_ux.edge_loop_double_click", "LEFTMOUSE", value="DOUBLE_CLICK", shift=True, props={"toggle": True, "deselect": False})
+        _add_kmi(km_mesh, "maya_ux.edge_loop_double_click", "LEFTMOUSE", value="DOUBLE_CLICK", ctrl=True, props={"toggle": False, "deselect": True})
+
         if getattr(prefs, "ortho_select_through", True):
             for tool_km_name in ("3D View Tool: Select Box", "3D View Tool: Select Box (fallback)"):
                 km_sel_box = kc.keymaps.new(name=tool_km_name, space_type="VIEW_3D", region_type="WINDOW")

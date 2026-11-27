@@ -761,6 +761,28 @@ def test_selection_pickwalk_soft_and_delete():
     assert len(box_fb_kms) == 4
     click_kms = [kmi for km, kmi in keymap.addon_keymaps if km.name == "Mesh" and kmi.idname == "maya_ux.ortho_select_click"]
     assert len(click_kms) == 3
+    dbl_kms = [kmi for km, kmi in keymap.addon_keymaps if km.name == "Mesh" and kmi.idname == "maya_ux.edge_loop_double_click" and kmi.value == "DOUBLE_CLICK"]
+    assert len(dbl_kms) == 3
+
+    # Double-Click Edge Loop action resolution & coherent loop walker
+    assert ops_selection.resolve_double_click_loop_action(True, False, False, False) == "REPLACE"
+    assert ops_selection.resolve_double_click_loop_action(True, True, False, True) == "DESELECT"
+    assert ops_selection.resolve_double_click_loop_action(True, False, True, False) == "EXTEND"
+    assert ops_selection.resolve_double_click_loop_action(False, True, True, False) == "DESELECT"
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.mesh.primitive_cylinder_add(vertices=16, end_fill_type="NOTHING")
+    dbl_cyl = bpy.context.active_object
+    bpy.ops.object.mode_set(mode="EDIT")
+    bm_dc = bmesh.from_edit_mesh(dbl_cyl.data)
+    vert_edges_init = [e for e in bm_dc.edges if abs(e.verts[0].co.z - e.verts[1].co.z) > 0.1]
+    bmesh.ops.subdivide_edges(bm_dc, edges=vert_edges_init, cuts=1)
+    bm_dc.edges.ensure_lookup_table()
+    ring_edge = next(e for e in bm_dc.edges if abs(e.verts[0].co.z - e.verts[1].co.z) < 1e-4 and abs(e.verts[0].co.z) < 1e-4)
+    vert_edge = next(e for e in bm_dc.edges if abs(e.verts[0].co.z - e.verts[1].co.z) > 0.1)
+    assert len(ops_selection.collect_edge_loop_indices(bm_dc, ring_edge)) == 16
+    assert len(ops_selection.collect_edge_loop_indices(bm_dc, vert_edge)) == 2
+    bpy.ops.object.mode_set(mode="OBJECT")
 
     # Box & multi-face selection across front + hidden back components on Cube
     ortho_cube = _reset_scene()

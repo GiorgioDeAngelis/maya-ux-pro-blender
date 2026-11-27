@@ -2,6 +2,12 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.7.3] - 2026-11-27
+### Added
+- **Double-Click Edge Loop Selection (`ops_selection.py`, `keymap.py`)**:
+  - Double-clicking **Left Mouse (`LMB Double-Click`)** on any edge in Edge Mode or Multi-Component Mode selects the entire **Edge Loop** (`⇧ + Double-Click` adds/deselects loops without losing selection, `⌃ + Double-Click` removes the loop).
+  - Works seamlessly in both **Perspective** (`mesh.loop_select`) and **Orthographic Select-Through** (`collect_edge_loop_indices` + `pick_stacked_indices_2d`), while keeping `⌥+Click` macOS Orbit untouched.
+
 ## [2.7.2] - 2026-11-27
 ### Added
 - **Maya Center Global Scale Manipulator (`ops_viewport.py`)**:

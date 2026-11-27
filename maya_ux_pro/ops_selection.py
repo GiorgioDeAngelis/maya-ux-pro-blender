@@ -1404,6 +1404,197 @@ class MAYA_UX_OT_ortho_select_box(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
 
+def resolve_double_click_loop_action(
+    clicked_selected: bool,
+    any_neighbor_selected: bool,
+    toggle: bool,
+    deselect: bool,
+) -> str:
+    """Resolve Double-Click edge loop action ('REPLACE' | 'EXTEND' | 'DESELECT') after Click 1."""
+    if deselect:
+        return "DESELECT"
+    if not toggle:
+        return "REPLACE"
+    if not clicked_selected and any_neighbor_selected:
+        return "DESELECT"
+    return "EXTEND"
+
+
+def _step_edge_loop(vert: bmesh.types.BMVert, prev_edge: bmesh.types.BMEdge) -> bmesh.types.BMEdge | None:
+    """Return the next coherent edge along a quad interior or boundary edge loop at vert."""
+    if len(vert.link_edges) == 4:
+        prev_faces = set(prev_edge.link_faces)
+        opp = [
+            e
+            for e in vert.link_edges
+            if e != prev_edge and not e.hide and not (set(e.link_faces) & prev_faces)
+        ]
+        if len(opp) == 1:
+            return opp[0]
+    if prev_edge.is_boundary:
+        bnd = [e for e in vert.link_edges if e != prev_edge and not e.hide and e.is_boundary]
+        if len(bnd) == 1:
+            return bnd[0]
+    return None
+
+
+def collect_edge_loop_indices(bm: bmesh.types.BMesh, seed_edge: bmesh.types.BMEdge) -> set[int]:
+    """Walk both ends of seed_edge to collect every edge index on its coherent edge loop."""
+    loop = {seed_edge.index}
+    for start_v in (seed_edge.verts[0], seed_edge.verts[1]):
+        cur_v = start_v
+        cur_e = seed_edge
+        while True:
+            nxt_e = _step_edge_loop(cur_v, cur_e)
+            if nxt_e is None or nxt_e.index in loop:
+                break
+            loop.add(nxt_e.index)
+            cur_v = nxt_e.other_vert(cur_v)
+            cur_e = nxt_e
+    return loop
+
+
+def _pick_nearest_edge_candidates_2d(context, objs, mouse_xy: tuple[float, float]):
+    """Project all visible mesh edges to 2D region coords for double-click loop picking."""
+    region = getattr(context, "region", None)
+    rv3d = getattr(context, "region_data", None)
+    if region is None or rv3d is None:
+        return []
+    candidates = []
+    for obj in objs:
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.edges.ensure_lookup_table()
+        mat_world = obj.matrix_world
+        for e in bm.edges:
+            if e.hide:
+                continue
+            w0 = mat_world @ e.verts[0].co
+            w1 = mat_world @ e.verts[1].co
+            p0 = view3d_utils.location_3d_to_region_2d(region, rv3d, w0)
+            p1 = view3d_utils.location_3d_to_region_2d(region, rv3d, w1)
+            if p0 is None or p1 is None:
+                continue
+            vx, vy = float(p1.x - p0.x), float(p1.y - p0.y)
+            len2 = vx * vx + vy * vy
+            t = 0.5 if len2 <= 1e-12 else max(0.0, min(1.0, ((mouse_xy[0] - p0.x) * vx + (mouse_xy[1] - p0.y) * vy) / len2))
+            qx = float(p0.x + t * vx)
+            qy = float(p0.y + t * vy)
+            depth = -(rv3d.view_matrix @ w0.lerp(w1, t)).z
+            candidates.append(((obj, e.index), qx, qy, float(depth)))
+    return candidates
+
+
+class MAYA_UX_OT_edge_loop_double_click(bpy.types.Operator):
+    """Maya-style Double-Click LMB on an Edge to select the entire Edge Loop."""
+
+    bl_idname = "maya_ux.edge_loop_double_click"
+    bl_label = "Maya Double-Click Select Edge Loop"
+    bl_options = {"REGISTER", "UNDO"}
+
+    toggle: BoolProperty(name="Toggle / Extend Loop", default=False)
+    deselect: BoolProperty(name="Deselect Loop", default=False)
+
+    def invoke(self, context, event):
+        if getattr(context, "mode", "") != "EDIT_MESH":
+            return {"PASS_THROUGH"}
+        if not bool(context.tool_settings.mesh_select_mode[1]):
+            return {"PASS_THROUGH"}
+
+        region = getattr(context, "region", None)
+        rv3d = getattr(context, "region_data", None)
+        if region is None or rv3d is None:
+            return {"PASS_THROUGH"}
+
+        objs = _get_edit_mesh_objects(context)
+        for obj in objs:
+            _PICKWALK_STATE.pop(obj.name, None)
+            _EDGE_LOOP_ORIGIN.pop(obj.name, None)
+
+        ui_scale = float(getattr(context.preferences.system, "ui_scale", 1.0))
+        radius = 12.0 * ui_scale
+        mouse_xy = (float(event.mouse_region_x), float(event.mouse_region_y))
+        candidates = _pick_nearest_edge_candidates_2d(context, objs, mouse_xy)
+
+        if is_ortho_component_view(context):
+            hits = pick_stacked_indices_2d(candidates, mouse_xy, hit_radius_px=radius, stack_tol_px=4.0 * ui_scale)
+            if not hits:
+                return {"FINISHED"}
+            bm_map = {obj: bmesh.from_edit_mesh(obj.data) for obj in objs}
+            for bm in bm_map.values():
+                bm.edges.ensure_lookup_table()
+
+            hit_groups = []
+            for obj, edge_idx in hits:
+                bm = bm_map.get(obj)
+                if bm is None or not (0 <= edge_idx < len(bm.edges)):
+                    continue
+                seed = bm.edges[edge_idx]
+                loop_indices = collect_edge_loop_indices(bm, seed)
+                any_nbr_sel = any(bm.edges[idx].select for idx in loop_indices if idx != edge_idx)
+                hit_groups.append((obj, bm, seed.select, any_nbr_sel, loop_indices))
+
+            if not hit_groups:
+                return {"FINISHED"}
+
+            any_clicked = any(cs for _, _, cs, _, _ in hit_groups)
+            any_nbr = any(ns for _, _, _, ns, _ in hit_groups)
+            action = resolve_double_click_loop_action(any_clicked, any_nbr, self.toggle, self.deselect)
+
+            if action == "REPLACE":
+                for bm in bm_map.values():
+                    for grp in (bm.verts, bm.edges, bm.faces):
+                        for el in grp:
+                            el.select = False
+                for _obj, bm, _cs, _ns, loop_indices in hit_groups:
+                    for idx in loop_indices:
+                        bm.edges[idx].select_set(True)
+            elif action == "EXTEND":
+                for _obj, bm, _cs, _ns, loop_indices in hit_groups:
+                    for idx in loop_indices:
+                        bm.edges[idx].select_set(True)
+            else:
+                for _obj, bm, _cs, _ns, loop_indices in hit_groups:
+                    for idx in loop_indices:
+                        bm.edges[idx].select_set(False)
+
+            for obj, bm in bm_map.items():
+                bm.select_flush_mode()
+                bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+        else:
+            if self.deselect:
+                action = "DESELECT"
+            elif not self.toggle:
+                action = "REPLACE"
+            else:
+                mx, my = mouse_xy
+                in_r = [(item, hypot(px - mx, py - my), depth) for item, px, py, depth in candidates if hypot(px - mx, py - my) <= radius]
+                if not in_r:
+                    return {"FINISHED"}
+                hit_obj, edge_idx = min(in_r, key=lambda c: (c[2], c[1]))[0]
+                bm = bmesh.from_edit_mesh(hit_obj.data)
+                bm.edges.ensure_lookup_table()
+                seed = bm.edges[edge_idx]
+                loop_indices = collect_edge_loop_indices(bm, seed)
+                any_nbr_sel = any(bm.edges[idx].select for idx in loop_indices if idx != edge_idx)
+                action = resolve_double_click_loop_action(seed.select, any_nbr_sel, True, False)
+
+            try:
+                bpy.ops.mesh.loop_select(
+                    "INVOKE_DEFAULT",
+                    extend=(action == "EXTEND"),
+                    deselect=(action == "DESELECT"),
+                    toggle=False,
+                )
+            except (TypeError, RuntimeError):
+                return {"PASS_THROUGH"}
+
+        from . import ops_extrude
+
+        if ops_extrude.is_extrude_session_active():
+            ops_extrude.end_extrude_session(context, restore_tool=True)
+        return {"FINISHED"}
+
+
 class MAYA_UX_OT_ortho_select_click(bpy.types.Operator):
     """Click select stacked front and hidden back components in Orthographic views."""
 
@@ -1535,6 +1726,7 @@ CLASSES = (
     MAYA_UX_OT_smart_delete,
     MAYA_UX_OT_grow_shrink_selection,
     MAYA_UX_OT_ortho_select_box,
+    MAYA_UX_OT_edge_loop_double_click,
     MAYA_UX_OT_ortho_select_click,
 )
 

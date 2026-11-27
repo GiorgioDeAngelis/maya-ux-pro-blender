@@ -1,4 +1,4 @@
-# Maya UX Pro — Complete Hotkey Reference (`v2.7.2`)
+# Maya UX Pro — Complete Hotkey Reference (`v2.7.3`)
 
 > Press **`?`** (or **`F1`**) inside Blender's 3D Viewport at any time to open the live searchable **Hotkey Reference & Equivalence** dialog.
 
@@ -44,6 +44,7 @@
 | Command | Shortcut |
 |---|---|
 | Face Center-Only Selection | `LMB Click` on center dot (`⇧+Click` toggle, `⌃+Click` deselect) |
+| Edge Loop Double-Click | `LMB Double-Click` on edge (`⇧+Double-Click` add/toggle, `⌃+Double-Click` deselect) |
 | Enlarged Selected Vertices | Preferences → **Enlarge Selected Vertices** / **Selected Vertex Size (px)** (`6 px` default) |
 | Orthographic Select-Through (Shaded) | `LMB Drag` / `LMB Click` in Ortho views (selects front & hidden back Verts/Edges/Faces even in Shaded mode) |
 | Grow / Shrink Selection (1 step per press) | `>` / `<` (Italian/EU ISO `<>` or `⇧ + .` / `⇧ + ,`) |

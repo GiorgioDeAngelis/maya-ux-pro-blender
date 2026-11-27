@@ -1,4 +1,4 @@
-# Maya UX Pro — Features & Module Architecture (`v2.7.2`)
+# Maya UX Pro — Features & Module Architecture (`v2.7.3`)
 
 Maya UX Pro is organized into **26 cleanly modular Python files** inside `maya_ux_pro/`. Every module can be toggled or configured in **Preferences → Extensions / Add-ons → Maya UX Pro**.
 
@@ -45,7 +45,7 @@ Maya UX Pro is organized into **26 cleanly modular Python files** inside `maya_u
 - **`maya_ux.select_face_center` & `sync_face_center_overlay()`**:
   - Enables `overlay.show_face_center = True` and `facedot_size = 5`.
   - In pure Face Select Mode (`(False, False, True)`), `LMB Click` / `⇧+Click` / `⌃+Click` picks faces **strictly** within `face_center_hit_radius` (`10px` default) of the projected face center handle, respecting depth and front-face/raycast occlusion (or selecting through in `X-Ray`/`Wireframe`).
-- **`maya_ux.convert_selection`** (`⌃+F9/F10/F11`), **`maya_ux.pick_walk`** (`↑↓←→`), **`maya_ux.toggle_soft_select`** (`B` + `⇧+[/]`), **`maya_ux.smart_delete`** (`⌫ Delete` dissolves interior edges keeping vertices; `⌘+⌫ Delete` removes vertices).
+- **`maya_ux.convert_selection`** (`⌃+F9/F10/F11`), **`maya_ux.edge_loop_double_click`** (`LMB Double-Click` / `⇧+Double-Click` / `⌃+Double-Click` in Edge & Multi-Component modes), **`maya_ux.pick_walk`** (`↑↓←→`), **`maya_ux.toggle_soft_select`** (`B` + `⇧+[/]`), **`maya_ux.smart_delete`** (`⌫ Delete` dissolves interior edges keeping vertices; `⌘+⌫ Delete` removes vertices).
 
 ---
 

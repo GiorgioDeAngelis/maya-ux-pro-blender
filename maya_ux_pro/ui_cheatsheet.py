@@ -42,6 +42,7 @@ def _get_sections(is_mac: bool):
         )
         sel = (
             ("Grow / Shrink Selection", "> / <  (ISO <> or ⇧+. / ⇧+,)"),
+            ("Double-Click Edge Loop", f"LMB Double-Click  |  {s}/⌃+Double-Click"),
             ("Invert Selection", f"{c}+{s}+I"),
             ("Convert to Vert / Edge / Face", f"{ct}+F9 / F10 / F11"),
             ("Pick Walk / Edge Loop Walk", f"↑/↓/←/→  |  {s}+↑/↓ Keep Loop"),
@@ -100,6 +101,7 @@ def _get_sections(is_mac: bool):
         )
         sel = (
             ("Grow / Shrink Selection", "> / <  (ISO <> or Shift+. / Shift+,)"),
+            ("Double-Click Edge Loop", "LMB Double-Click  |  Shift/Ctrl+Double-Click"),
             ("Invert Selection", "Ctrl + Shift + I"),
             ("Convert to Vert / Edge / Face", "Ctrl+F9 / F10 / F11"),
             ("Pick Walk / Edge Loop Walk", "Arrows  |  Shift+Up/Down Keep Loop"),
