@@ -2,6 +2,12 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.6.0] - 2026-11-27
+### Added
+- **Orthographic Select-Through in Shaded Mode (`ops_selection.py`, `preferences.py`, `keymap.py`)**:
+  - In any Orthographic view (`Top`, `Front`, `Side`, `Back`, `Left`, `Bottom`, `User Ortho`, and Quad View ortho panes), marquee box selection (`LMB Drag` / `⇧+Drag` / `⌃+Drag`) and click selection (`LMB Click` / `⇧+Click` / `⌃+Click`) now select **both front and hidden back components** across **Vertex**, **Edge**, **Face**, and **Multi-Component** modes even when shading is Solid / Material / Rendered (matching Wireframe and Maya behavior).
+  - Perspective (`Persp`) views keep standard front-facing occlusion. Toggleable in Preferences (`Orthographic Select-Through (Shaded)`).
+
 ## [2.5.11] - 2026-11-27
 ### Improved
 - **Ordered LIFO Decrement for `Shift + ↓` / `Shift + ↑` (`ops_selection.py`)**: extending Edge Loops with `Shift + ↑` and then pressing `Shift + ↓` now cleanly pops the added edge loops back in reverse order down to the starting anchor loop before extending in the opposite direction (symmetric in both directions).

@@ -318,6 +318,12 @@ class MayaUXPreferences(bpy.types.AddonPreferences):
         max=28.0,
         step=50,
     )
+    ortho_select_through: BoolProperty(
+        name="Orthographic Select-Through (Shaded)",
+        description="Select front and hidden back components (Verts/Edges/Faces) in Orthographic views even in Solid/Shaded mode, like Wireframe and Maya",
+        default=True,
+        update=_on_pref_update,
+    )
 
     def draw(self, context):
         layout = self.layout
@@ -391,6 +397,7 @@ class MayaUXPreferences(bpy.types.AddonPreferences):
         beh_box.prop(self, "maya_face_center_select")
         if self.maya_face_center_select:
             beh_box.prop(self, "face_center_hit_radius")
+        beh_box.prop(self, "ortho_select_through")
         beh_box.prop(self, "clean_empty_new_scene")
         beh_box.prop(self, "clean_maya_startup_layout")
 
@@ -432,6 +439,7 @@ _DEFAULT_PREFS = SimpleNamespace(
     pivot_hold_mode="HOLD",
     maya_face_center_select=True,
     face_center_hit_radius=10.0,
+    ortho_select_through=True,
 )
 
 

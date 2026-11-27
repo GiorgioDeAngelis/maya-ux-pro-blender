@@ -734,6 +734,48 @@ def test_selection_pickwalk_soft_and_delete():
     assert bpy.ops.maya_ux.pick_walk(direction="DOWN", extend=True) == {"FINISHED"}
     assert {e.index for e in bmesh.from_edit_mesh(cyl.data).edges if e.select} == ring1
     bpy.ops.object.mode_set(mode="OBJECT")
+
+    # Orthographic Select-Through in Shaded mode (Verts, Edges, Faces + Stacked Click + Keymaps)
+    assert ops_selection.segment_intersects_rect(10.0, 10.0, 50.0, 50.0, 20.0, 20.0, 40.0, 40.0) is True
+    assert ops_selection.segment_intersects_rect(10.0, 10.0, 10.0, 10.0, 5.0, 5.0, 15.0, 15.0) is True
+    assert ops_selection.segment_intersects_rect(0.0, 0.0, 5.0, 5.0, 20.0, 20.0, 40.0, 40.0) is False
+    assert ops_selection.point_to_segment_dist_2d(15.0, 15.0, 10.0, 10.0, 20.0, 10.0) == 5.0
+
+    stacked = ops_selection.pick_stacked_indices_2d(
+        [("front", 100.0, 100.0, 2.0), ("back", 101.0, 99.5, 8.0), ("neighbor", 120.0, 100.0, 3.0)],
+        (102.0, 100.0),
+        hit_radius_px=10.0,
+        stack_tol_px=4.0,
+    )
+    assert set(stacked) == {"front", "back"}
+
+    assert ops_selection.is_ortho_component_view(SimpleNamespace(mode="EDIT_MESH", region_data=SimpleNamespace(view_perspective="ORTHO"))) is True
+    assert ops_selection.is_ortho_component_view(SimpleNamespace(mode="EDIT_MESH", region_data=SimpleNamespace(view_perspective="PERSP"))) is False
+    assert ops_selection.is_ortho_component_view(SimpleNamespace(mode="OBJECT", region_data=SimpleNamespace(view_perspective="ORTHO"))) is False
+
+    box_kms = [kmi for km, kmi in keymap.addon_keymaps if km.name == "3D View Tool: Select Box" and kmi.idname == "maya_ux.ortho_select_box"]
+    assert len(box_kms) == 4
+    click_kms = [kmi for km, kmi in keymap.addon_keymaps if km.name == "Mesh" and kmi.idname == "maya_ux.ortho_select_click"]
+    assert len(click_kms) == 3
+
+    # Box & multi-face selection across front + hidden back components on Cube
+    ortho_cube = _reset_scene()
+    ts = bpy.context.scene.tool_settings
+    bpy.ops.object.mode_set(mode="EDIT")
+    ts.mesh_select_mode = (True, False, False)
+    ops_selection.apply_ortho_box_selection([ortho_cube], (True, False, False), {ortho_cube: ({0, 1, 6, 7}, set(), set())}, mode="SET")
+    assert {v.index for v in bmesh.from_edit_mesh(ortho_cube.data).verts if v.select} == {0, 1, 6, 7}
+    ops_selection.apply_ortho_box_selection([ortho_cube], (True, False, False), {ortho_cube: ({2, 3}, set(), set())}, mode="ADD")
+    assert {v.index for v in bmesh.from_edit_mesh(ortho_cube.data).verts if v.select} == {0, 1, 2, 3, 6, 7}
+    ops_selection.apply_ortho_box_selection([ortho_cube], (True, False, False), {ortho_cube: ({6, 7}, set(), set())}, mode="SUB")
+    assert {v.index for v in bmesh.from_edit_mesh(ortho_cube.data).verts if v.select} == {0, 1, 2, 3}
+
+    ts.mesh_select_mode = (False, False, True)
+    ops_selection.apply_face_center_selection_multi([ortho_cube], [(ortho_cube, 0), (ortho_cube, 2)])
+    assert {f.index for f in bmesh.from_edit_mesh(ortho_cube.data).faces if f.select} == {0, 2}
+    ops_selection.apply_face_center_selection_multi([ortho_cube], [(ortho_cube, 0), (ortho_cube, 2)], toggle=True)
+    assert {f.index for f in bmesh.from_edit_mesh(ortho_cube.data).faces if f.select} == set()
+    bpy.ops.object.mode_set(mode="OBJECT")
     print("[PASS] selection_pickwalk_soft_and_delete")
 
 

@@ -4,8 +4,10 @@ from math import hypot
 
 import bmesh
 import bpy
+import gpu
 from bpy.props import BoolProperty, EnumProperty, FloatProperty
 from bpy_extras import view3d_utils
+from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 
 from .preferences import get_prefs
@@ -15,6 +17,186 @@ _GROW_HISTORY: dict[tuple, list[tuple[tuple, tuple]]] = {}
 _PICKWALK_STATE: dict[str, dict] = {}
 _EDGE_LOOP_ORIGIN: dict[str, dict] = {}
 _MAX_GROW_HISTORY = 64
+
+
+def is_ortho_component_view(context) -> bool:
+    """True when Edit Mesh is active in an Orthographic viewport with ortho_select_through enabled."""
+    if getattr(context, "mode", "") != "EDIT_MESH":
+        return False
+    if not bool(getattr(get_prefs(context), "ortho_select_through", True)):
+        return False
+    rv3d = getattr(context, "region_data", None)
+    return getattr(rv3d, "view_perspective", "PERSP") == "ORTHO"
+
+
+def segment_intersects_rect(
+    x0: float, y0: float, x1: float, y1: float, xmin: float, ymin: float, xmax: float, ymax: float
+) -> bool:
+    """Return True if 2D segment (x0,y0)-(x1,y1) intersects [xmin,xmax] x [ymin,ymax] (Liang-Barsky)."""
+    dx = x1 - x0
+    dy = y1 - y0
+    t0 = 0.0
+    t1 = 1.0
+    for p, q in (
+        (-dx, x0 - xmin),
+        (dx, xmax - x0),
+        (-dy, y0 - ymin),
+        (dy, ymax - y0),
+    ):
+        if abs(p) <= 1e-12:
+            if q < 0.0:
+                return False
+        else:
+            r = q / p
+            if p < 0.0:
+                if r > t1:
+                    return False
+                if r > t0:
+                    t0 = r
+            else:
+                if r < t0:
+                    return False
+                if r < t1:
+                    t1 = r
+    return t0 <= t1
+
+
+def point_to_segment_dist_2d(px: float, py: float, x0: float, y0: float, x1: float, y1: float) -> float:
+    """Shortest Euclidean distance from 2D point (px, py) to segment (x0,y0)-(x1,y1)."""
+    vx = x1 - x0
+    vy = y1 - y0
+    len2 = vx * vx + vy * vy
+    if len2 <= 1e-12:
+        return hypot(px - x0, py - y0)
+    t = max(0.0, min(1.0, ((px - x0) * vx + (py - y0) * vy) / len2))
+    return hypot(px - (x0 + t * vx), py - (y0 + t * vy))
+
+
+def pick_stacked_indices_2d(
+    candidates,
+    mouse_xy: tuple[float, float],
+    hit_radius_px: float = 10.0,
+    stack_tol_px: float = 4.0,
+) -> list:
+    """Return all front+back stacked candidates overlapping the closest hit under mouse_xy."""
+    mx, my = mouse_xy
+    in_radius = []
+    for item, px, py, depth in candidates:
+        dist = hypot(px - mx, py - my)
+        if dist <= hit_radius_px:
+            in_radius.append((item, float(px), float(py), float(depth), dist))
+    if not in_radius:
+        return []
+    _item, ref_x, ref_y, _depth, _dist = min(in_radius, key=lambda c: (c[4], c[3]))
+    return [item for item, px, py, _d, _md in in_radius if hypot(px - ref_x, py - ref_y) <= stack_tol_px]
+
+
+def apply_ortho_box_selection(
+    objs: list[bpy.types.Object],
+    select_mode: tuple[bool, bool, bool],
+    hits_by_obj: dict[bpy.types.Object, tuple[set[int], set[int], set[int]]],
+    mode: str = "SET",
+):
+    """Apply SET/ADD/SUB selection across Vert/Edge/Face hits for orthographic select-through."""
+    v_mode, e_mode, f_mode = select_mode
+    for obj in objs:
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+        v_hits, e_hits, f_hits = hits_by_obj.get(obj, (set(), set(), set()))
+
+        if mode == "SET":
+            for grp in (bm.verts, bm.edges, bm.faces):
+                for el in grp:
+                    el.select = False
+            for idx in (v_hits if v_mode else ()):
+                bm.verts[idx].select_set(True)
+            for idx in (e_hits if e_mode else ()):
+                bm.edges[idx].select_set(True)
+            for idx in (f_hits if f_mode else ()):
+                bm.faces[idx].select_set(True)
+        elif mode == "ADD":
+            for idx in (v_hits if v_mode else ()):
+                bm.verts[idx].select_set(True)
+            for idx in (e_hits if e_mode else ()):
+                bm.edges[idx].select_set(True)
+            for idx in (f_hits if f_mode else ()):
+                bm.faces[idx].select_set(True)
+        else:
+            for idx in (v_hits if v_mode else ()):
+                bm.verts[idx].select_set(False)
+            for idx in (e_hits if e_mode else ()):
+                bm.edges[idx].select_set(False)
+            for idx in (f_hits if f_mode else ()):
+                bm.faces[idx].select_set(False)
+
+        bm.select_flush_mode()
+        bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+
+
+def select_mesh_components_in_rect(
+    context,
+    objs: list[bpy.types.Object],
+    rect_xy: tuple[float, float, float, float],
+    mode: str = "SET",
+):
+    """Project all non-hidden Verts/Edges/Faces (front & hidden back) and select those inside rect_xy."""
+    region = getattr(context, "region", None)
+    rv3d = getattr(context, "region_data", None)
+    if region is None or rv3d is None:
+        return
+    xmin, ymin, xmax, ymax = rect_xy
+    select_mode = tuple(bool(x) for x in context.tool_settings.mesh_select_mode)
+    v_mode, e_mode, f_mode = select_mode
+    hits_by_obj: dict[bpy.types.Object, tuple[set[int], set[int], set[int]]] = {}
+
+    for obj in objs:
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+        mat_world = obj.matrix_world
+
+        vert_2d: dict[int, tuple[float, float]] = {}
+        for v in bm.verts:
+            if v.hide:
+                continue
+            pt = view3d_utils.location_3d_to_region_2d(region, rv3d, mat_world @ v.co)
+            if pt is not None:
+                vert_2d[v.index] = (float(pt.x), float(pt.y))
+
+        v_hits: set[int] = set()
+        e_hits: set[int] = set()
+        f_hits: set[int] = set()
+
+        if v_mode:
+            for idx, (px, py) in vert_2d.items():
+                if xmin <= px <= xmax and ymin <= py <= ymax:
+                    v_hits.add(idx)
+
+        if e_mode:
+            for e in bm.edges:
+                if e.hide:
+                    continue
+                p0 = vert_2d.get(e.verts[0].index)
+                p1 = vert_2d.get(e.verts[1].index)
+                if p0 is None or p1 is None:
+                    continue
+                if segment_intersects_rect(p0[0], p0[1], p1[0], p1[1], xmin, ymin, xmax, ymax):
+                    e_hits.add(e.index)
+
+        if f_mode:
+            for f in bm.faces:
+                if f.hide:
+                    continue
+                pt = view3d_utils.location_3d_to_region_2d(region, rv3d, mat_world @ f.calc_center_median())
+                if pt is not None and xmin <= pt.x <= xmax and ymin <= pt.y <= ymax:
+                    f_hits.add(f.index)
+
+        hits_by_obj[obj] = (v_hits, e_hits, f_hits)
+
+    apply_ortho_box_selection(objs, select_mode, hits_by_obj, mode=mode)
 
 
 def sync_face_center_overlay(enabled: bool, context=None):
@@ -119,19 +301,25 @@ def pick_face_by_center(context, mouse_xy: tuple[float, float], hit_radius_px: f
     return pick_face_by_center_2d(candidates, mouse_xy, hit_radius_px=hit_radius_px)
 
 
-def apply_face_center_selection(
+def apply_face_center_selection_multi(
     objs,
-    hit: tuple[bpy.types.Object, int] | None,
+    hits: list[tuple[bpy.types.Object, int]],
     *,
     toggle: bool = False,
     deselect: bool = False,
 ):
-    """Apply plain/toggle/deselect face selection using (obj, face_index) with live BMesh wrappers."""
+    """Apply plain/toggle/deselect face selection across one or more (obj, face_index) hits."""
     bm_map = {obj: bmesh.from_edit_mesh(obj.data) for obj in objs}
     for bm in bm_map.values():
         bm.faces.ensure_lookup_table()
 
-    if hit is None:
+    valid_hits = []
+    for hit_obj, hit_idx in hits:
+        hit_bm = bm_map.get(hit_obj)
+        if hit_bm is not None and 0 <= hit_idx < len(hit_bm.faces):
+            valid_hits.append((hit_bm, hit_bm.faces[hit_idx]))
+
+    if not valid_hits:
         if not toggle and not deselect:
             for obj, bm in bm_map.items():
                 for f in bm.faces:
@@ -141,30 +329,61 @@ def apply_face_center_selection(
                 bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
         return
 
-    hit_obj, hit_idx = hit
-    hit_bm = bm_map.get(hit_obj)
-    if hit_bm is None or not (0 <= hit_idx < len(hit_bm.faces)):
-        return
-    hit_face = hit_bm.faces[hit_idx]
-
     if not toggle and not deselect:
         for bm in bm_map.values():
             for f in bm.faces:
                 f.select_set(False)
             bm.faces.active = None
-        hit_face.select_set(True)
-        hit_bm.faces.active = hit_face
-    elif toggle:
-        new_state = not hit_face.select
-        hit_face.select_set(new_state)
-        if new_state:
+        for hit_bm, hit_face in valid_hits:
+            hit_face.select_set(True)
             hit_bm.faces.active = hit_face
+    elif toggle:
+        target_state = not all(f.select for _bm, f in valid_hits)
+        for hit_bm, hit_face in valid_hits:
+            hit_face.select_set(target_state)
+            if target_state:
+                hit_bm.faces.active = hit_face
     else:
-        hit_face.select_set(False)
+        for _bm, hit_face in valid_hits:
+            hit_face.select_set(False)
 
     for obj, bm in bm_map.items():
         bm.select_flush_mode()
         bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+
+
+def apply_face_center_selection(
+    objs,
+    hit: tuple[bpy.types.Object, int] | None,
+    *,
+    toggle: bool = False,
+    deselect: bool = False,
+):
+    """Apply plain/toggle/deselect face selection using (obj, face_index) with live BMesh wrappers."""
+    apply_face_center_selection_multi(objs, [hit] if hit is not None else [], toggle=toggle, deselect=deselect)
+
+
+def _pick_ortho_face_centers(context, mouse_xy: tuple[float, float], hit_radius_px: float = 10.0):
+    region = getattr(context, "region", None)
+    rv3d = getattr(context, "region_data", None)
+    if region is None or rv3d is None:
+        return []
+    objs = _get_edit_mesh_objects(context)
+    candidates = []
+    for obj in objs:
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces.ensure_lookup_table()
+        mat_world = obj.matrix_world
+        for face in bm.faces:
+            if face.hide:
+                continue
+            world_center = mat_world @ face.calc_center_median()
+            pt2d = view3d_utils.location_3d_to_region_2d(region, rv3d, world_center)
+            if pt2d is None:
+                continue
+            depth = -(rv3d.view_matrix @ world_center).z
+            candidates.append(((obj, face.index), float(pt2d.x), float(pt2d.y), float(depth)))
+    return pick_stacked_indices_2d(candidates, mouse_xy, hit_radius_px=hit_radius_px)
 
 
 class MAYA_UX_OT_select_face_center(bpy.types.Operator):
@@ -195,13 +414,14 @@ class MAYA_UX_OT_select_face_center(bpy.types.Operator):
         ui_scale = float(getattr(context.preferences.system, "ui_scale", 1.0))
         radius = float(getattr(prefs, "face_center_hit_radius", 10.0)) * ui_scale
         mouse_xy = (float(event.mouse_region_x), float(event.mouse_region_y))
+        objs = _get_edit_mesh_objects(context)
+
+        if is_ortho_component_view(context):
+            hits = _pick_ortho_face_centers(context, mouse_xy, hit_radius_px=radius)
+            apply_face_center_selection_multi(objs, hits, toggle=self.toggle, deselect=self.deselect)
+            return {"FINISHED"}
 
         hit = pick_face_by_center(context, mouse_xy, hit_radius_px=radius)
-
-        objs = [o for o in (getattr(context, "objects_in_mode", None) or ()) if o is not None and o.type == "MESH"]
-        if not objs and context.active_object is not None and context.active_object.type == "MESH":
-            objs = [context.active_object]
-
         apply_face_center_selection(objs, hit, toggle=self.toggle, deselect=self.deselect)
         return {"FINISHED"}
 
@@ -841,6 +1061,229 @@ class MAYA_UX_OT_grow_shrink_selection(bpy.types.Operator):
         return self._run_action(context, resolved)
 
 
+class MAYA_UX_OT_ortho_select_box(bpy.types.Operator):
+    """Box select both front and hidden back mesh components in Orthographic views."""
+
+    bl_idname = "maya_ux.ortho_select_box"
+    bl_label = "Maya Ortho Box Select (Select-Through)"
+    bl_options = {"REGISTER", "UNDO"}
+
+    mode: EnumProperty(
+        name="Mode",
+        items=[
+            ("SET", "Set", "Set new selection"),
+            ("ADD", "Add", "Extend selection"),
+            ("SUB", "Subtract", "Subtract from selection"),
+        ],
+        default="SET",
+    )
+
+    _draw_handle = None
+    _region = None
+    _start_x: float = 0.0
+    _start_y: float = 0.0
+    _cur_x: float = 0.0
+    _cur_y: float = 0.0
+
+    def _draw_marquee(self):
+        if bpy.context.region != self._region:
+            return
+        x0, y0 = self._start_x, self._start_y
+        x1, y1 = self._cur_x, self._cur_y
+        xmin, xmax = min(x0, x1), max(x0, x1)
+        ymin, ymax = min(y0, y1), max(y0, y1)
+
+        shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+        gpu.state.blend_set("ALPHA")
+
+        fill_verts = [(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax)]
+        fill_batch = batch_for_shader(shader, "TRIS", {"pos": fill_verts}, indices=[(0, 1, 2), (0, 2, 3)])
+        shader.bind()
+        shader.uniform_float("color", (0.28, 0.56, 0.90, 0.16))
+        fill_batch.draw(shader)
+
+        border_verts = [(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax), (xmin, ymin)]
+        border_batch = batch_for_shader(shader, "LINE_STRIP", {"pos": border_verts})
+        shader.uniform_float("color", (0.85, 0.92, 1.0, 0.85))
+        border_batch.draw(shader)
+        gpu.state.blend_set("NONE")
+
+    def _cleanup(self):
+        if self._draw_handle is not None:
+            bpy.types.SpaceView3D.draw_handler_remove(self._draw_handle, "WINDOW")
+            self._draw_handle = None
+        if self._region is not None:
+            self._region.tag_redraw()
+
+    def invoke(self, context, event):
+        if not is_ortho_component_view(context):
+            return {"PASS_THROUGH"}
+        region = getattr(context, "region", None)
+        rv3d = getattr(context, "region_data", None)
+        if region is None or rv3d is None:
+            return {"PASS_THROUGH"}
+
+        self._region = region
+        px = getattr(event, "mouse_prev_press_x", None)
+        py = getattr(event, "mouse_prev_press_y", None)
+        if px is not None and py is not None:
+            self._start_x = float(px - region.x)
+            self._start_y = float(py - region.y)
+        else:
+            self._start_x = float(event.mouse_region_x)
+            self._start_y = float(event.mouse_region_y)
+        self._cur_x = float(event.mouse_region_x)
+        self._cur_y = float(event.mouse_region_y)
+
+        self._draw_handle = bpy.types.SpaceView3D.draw_handler_add(
+            self._draw_marquee, (), "WINDOW", "POST_PIXEL"
+        )
+        context.window_manager.modal_handler_add(self)
+        region.tag_redraw()
+        return {"RUNNING_MODAL"}
+
+    def modal(self, context, event):
+        if event.type == "MOUSEMOVE":
+            self._cur_x = float(event.mouse_region_x)
+            self._cur_y = float(event.mouse_region_y)
+            if self._region is not None:
+                self._region.tag_redraw()
+            return {"RUNNING_MODAL"}
+
+        if event.type == "LEFTMOUSE" and event.value == "RELEASE":
+            self._cur_x = float(event.mouse_region_x)
+            self._cur_y = float(event.mouse_region_y)
+            self._cleanup()
+            rect = (
+                min(self._start_x, self._cur_x),
+                min(self._start_y, self._cur_y),
+                max(self._start_x, self._cur_x),
+                max(self._start_y, self._cur_y),
+            )
+            select_mesh_components_in_rect(context, _get_edit_mesh_objects(context), rect, mode=self.mode)
+            return {"FINISHED"}
+
+        if event.type in {"RIGHTMOUSE", "ESC"} and event.value == "PRESS":
+            self._cleanup()
+            return {"CANCELLED"}
+
+        return {"RUNNING_MODAL"}
+
+
+class MAYA_UX_OT_ortho_select_click(bpy.types.Operator):
+    """Click select stacked front and hidden back components in Orthographic views."""
+
+    bl_idname = "maya_ux.ortho_select_click"
+    bl_label = "Maya Ortho Click Select (Select-Through)"
+    bl_options = {"REGISTER", "UNDO"}
+
+    toggle: BoolProperty(name="Toggle", default=False)
+    deselect: BoolProperty(name="Deselect", default=False)
+
+    def invoke(self, context, event):
+        if not is_ortho_component_view(context):
+            return {"PASS_THROUGH"}
+        select_mode = tuple(bool(x) for x in context.tool_settings.mesh_select_mode)
+        prefs = get_prefs(context)
+        if select_mode == (False, False, True) and bool(getattr(prefs, "maya_face_center_select", True)):
+            return {"PASS_THROUGH"}
+
+        region = getattr(context, "region", None)
+        rv3d = getattr(context, "region_data", None)
+        if region is None or rv3d is None:
+            return {"PASS_THROUGH"}
+
+        ui_scale = float(getattr(context.preferences.system, "ui_scale", 1.0))
+        radius = 12.0 * ui_scale
+        mouse_xy = (float(event.mouse_region_x), float(event.mouse_region_y))
+        objs = _get_edit_mesh_objects(context)
+        v_mode, e_mode, f_mode = select_mode
+
+        candidates = []
+        for obj in objs:
+            bm = bmesh.from_edit_mesh(obj.data)
+            bm.verts.ensure_lookup_table()
+            bm.edges.ensure_lookup_table()
+            bm.faces.ensure_lookup_table()
+            mat_world = obj.matrix_world
+
+            if v_mode:
+                for v in bm.verts:
+                    if v.hide:
+                        continue
+                    wc = mat_world @ v.co
+                    pt = view3d_utils.location_3d_to_region_2d(region, rv3d, wc)
+                    if pt is not None:
+                        depth = -(rv3d.view_matrix @ wc).z
+                        candidates.append(((obj, "verts", v.index), float(pt.x), float(pt.y), float(depth)))
+
+            if e_mode:
+                for e in bm.edges:
+                    if e.hide:
+                        continue
+                    w0 = mat_world @ e.verts[0].co
+                    w1 = mat_world @ e.verts[1].co
+                    p0 = view3d_utils.location_3d_to_region_2d(region, rv3d, w0)
+                    p1 = view3d_utils.location_3d_to_region_2d(region, rv3d, w1)
+                    if p0 is None or p1 is None:
+                        continue
+                    vx, vy = float(p1.x - p0.x), float(p1.y - p0.y)
+                    len2 = vx * vx + vy * vy
+                    t = 0.5 if len2 <= 1e-12 else max(0.0, min(1.0, ((mouse_xy[0] - p0.x) * vx + (mouse_xy[1] - p0.y) * vy) / len2))
+                    qx = float(p0.x + t * vx)
+                    qy = float(p0.y + t * vy)
+                    depth = -(rv3d.view_matrix @ w0.lerp(w1, t)).z
+                    candidates.append(((obj, "edges", e.index), qx, qy, float(depth)))
+
+            if f_mode:
+                for f in bm.faces:
+                    if f.hide:
+                        continue
+                    wc = mat_world @ f.calc_center_median()
+                    pt = view3d_utils.location_3d_to_region_2d(region, rv3d, wc)
+                    if pt is not None:
+                        depth = -(rv3d.view_matrix @ wc).z
+                        candidates.append(((obj, "faces", f.index), float(pt.x), float(pt.y), float(depth)))
+
+        stacked = pick_stacked_indices_2d(candidates, mouse_xy, hit_radius_px=radius, stack_tol_px=4.0 * ui_scale)
+        bm_map = {obj: bmesh.from_edit_mesh(obj.data) for obj in objs}
+        for bm in bm_map.values():
+            bm.verts.ensure_lookup_table()
+            bm.edges.ensure_lookup_table()
+            bm.faces.ensure_lookup_table()
+
+        if not stacked:
+            if not self.toggle and not self.deselect:
+                for obj, bm in bm_map.items():
+                    for grp in (bm.verts, bm.edges, bm.faces):
+                        for el in grp:
+                            el.select = False
+                    bm.select_flush_mode()
+                    bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+            return {"FINISHED"}
+
+        resolved_els = [(obj, bm_map[obj], getattr(bm_map[obj], kind)[idx]) for obj, kind, idx in stacked if obj in bm_map]
+        if not self.toggle and not self.deselect:
+            for bm in bm_map.values():
+                for grp in (bm.verts, bm.edges, bm.faces):
+                    for el in grp:
+                        el.select = False
+            for _obj, _bm, el in resolved_els:
+                el.select_set(True)
+        elif self.toggle:
+            target_state = not all(el.select for _obj, _bm, el in resolved_els)
+            for _obj, _bm, el in resolved_els:
+                el.select_set(target_state)
+        else:
+            for _obj, _bm, el in resolved_els:
+                el.select_set(False)
+
+        for obj, bm in bm_map.items():
+            bm.select_flush_mode()
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+        return {"FINISHED"}
+
+
 CLASSES = (
     MAYA_UX_OT_select_face_center,
     MAYA_UX_OT_convert_selection,
@@ -849,6 +1292,8 @@ CLASSES = (
     MAYA_UX_OT_soft_select_radius,
     MAYA_UX_OT_smart_delete,
     MAYA_UX_OT_grow_shrink_selection,
+    MAYA_UX_OT_ortho_select_box,
+    MAYA_UX_OT_ortho_select_click,
 )
 
 
