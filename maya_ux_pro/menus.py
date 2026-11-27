@@ -46,6 +46,9 @@ class VIEW3D_MT_maya_component_pie(bpy.types.Menu):
             col.operator("object.shade_auto_smooth", text="Shade Auto Smooth", icon="MOD_SMOOTH")
             col.operator("object.shade_flat", text="Shade Flat", icon="SHADING_SOLID")
             col.separator()
+            col.operator("maya_ux.add_divisions", text="Add Divisions", icon="MESH_GRID")
+            col.operator("maya_ux.smooth_mesh", text="Smooth", icon="MOD_SUBSURF")
+            col.separator()
             col.operator("view3d.view_selected", text="Frame Selected (F)", icon="ZOOM_SELECTED")
 
         # SW: Isolate Select
@@ -74,14 +77,20 @@ class VIEW3D_MT_maya_modeling_pie(bpy.types.Menu):
             pie.operator("mesh.knife_tool", text="Multi-Cut (Knife)", icon="SCULPTMODE_HLT")
             pie.operator("mesh.bridge_edge_loops", text="Bridge Loops", icon="MOD_SOLIDIFY")
             pie.operator("wm.call_menu", text="Merge (M)", icon="SNAP_VERTEX").name = "VIEW3D_MT_edit_mesh_merge"
-            pie.operator("mesh.vertices_smooth", text="Smooth Vertices", icon="MOD_SMOOTH")
+            col = pie.box().column(align=True)
+            col.operator("maya_ux.add_divisions", text="Add Divisions", icon="MESH_GRID")
+            col.operator("maya_ux.smooth_mesh", text="Smooth", icon="MOD_SUBSURF")
+            col.operator("mesh.vertices_smooth", text="Smooth Vertices", icon="MOD_SMOOTH")
         else:
             pie.operator("mesh.primitive_cube_add", text="Polygon Cube", icon="MESH_CUBE")
             pie.operator("mesh.primitive_uv_sphere_add", text="Polygon Sphere", icon="MESH_UVSPHERE")
             pie.operator("maya_ux.freeze_transforms", text="Freeze Transforms", icon="FREEZE")
             pie.operator("mesh.primitive_cylinder_add", text="Polygon Cylinder", icon="MESH_CYLINDER")
             pie.operator("mesh.primitive_plane_add", text="Polygon Plane", icon="MESH_PLANE")
-            pie.operator("maya_ux.combine", text="Combine", icon="SELECT_EXTEND")
+            col = pie.box().column(align=True)
+            col.operator("maya_ux.add_divisions", text="Add Divisions", icon="MESH_GRID")
+            col.operator("maya_ux.smooth_mesh", text="Smooth", icon="MOD_SUBSURF")
+            col.operator("maya_ux.combine", text="Combine", icon="SELECT_EXTEND")
             pie.operator("maya_ux.delete_history", text="Delete History", icon="TRASH")
             pie.operator("maya_ux.separate", text="Separate", icon="UNLINKED")
 

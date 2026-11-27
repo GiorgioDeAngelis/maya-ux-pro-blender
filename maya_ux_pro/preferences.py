@@ -60,6 +60,13 @@ def _on_selected_vert_size_update(self, context):
     ops_selection._tag_view3d_redraw(context or bpy.context)
 
 
+def _on_selected_wire_update(self, context):
+    from . import ops_selection
+
+    ops_selection.invalidate_selected_wireframe_cache()
+    ops_selection._tag_view3d_redraw(context or bpy.context)
+
+
 def is_macos_layout(context=None) -> bool:
     """Return True when macOS / MacBook Pro keyboard & Trackpad layout is active."""
     prefs = get_prefs(context)
@@ -357,6 +364,12 @@ class MayaUXPreferences(bpy.types.AddonPreferences):
         step=50,
         update=_on_selected_vert_size_update,
     )
+    maya_selected_wireframe: BoolProperty(
+        name="Maya Selection Wireframe on Shaded",
+        description="Display polygon edges/divisions on selected Mesh objects in Shaded mode and hide them when deselected (like Maya)",
+        default=True,
+        update=_on_selected_wire_update,
+    )
     extrude_activate_gizmo: BoolProperty(
         name="Extrude: Show Manipulator Gizmo",
         description="Activate the 3D Transform Manipulator (Local Normal / World) after Maya Extrude",
@@ -440,6 +453,7 @@ class MayaUXPreferences(bpy.types.AddonPreferences):
         beh_box.prop(self, "enlarge_selected_vertices")
         if self.enlarge_selected_vertices:
             beh_box.prop(self, "selected_vertex_size")
+        beh_box.prop(self, "maya_selected_wireframe")
         beh_box.prop(self, "extrude_activate_gizmo")
         beh_box.prop(self, "clean_empty_new_scene")
         beh_box.prop(self, "clean_maya_startup_layout")
@@ -486,6 +500,7 @@ _DEFAULT_PREFS = SimpleNamespace(
     isolate_component_display=True,
     enlarge_selected_vertices=True,
     selected_vertex_size=6.0,
+    maya_selected_wireframe=True,
     extrude_activate_gizmo=True,
 )
 

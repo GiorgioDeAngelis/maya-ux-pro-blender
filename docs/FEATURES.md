@@ -1,4 +1,4 @@
-# Maya UX Pro — Features & Module Architecture (`v2.8.3`)
+# Maya UX Pro — Features & Module Architecture (`v2.8.6`)
 
 Maya UX Pro is organized into **26 cleanly modular Python files** inside `maya_ux_pro/`. Every module can be toggled or configured in **Preferences → Extensions / Add-ons → Maya UX Pro**.
 
@@ -45,7 +45,7 @@ Maya UX Pro is organized into **26 cleanly modular Python files** inside `maya_u
 - **`maya_ux.select_face_center` & `sync_face_center_overlay()`**:
   - Enables `overlay.show_face_center = True` and `facedot_size = 5`.
   - In pure Face Select Mode (`(False, False, True)`), `LMB Click` / `⇧+Click` / `⌃+Click` picks faces **strictly** within `face_center_hit_radius` (`10px` default) of the projected face center handle, respecting depth and front-face/raycast occlusion (or selecting through in `X-Ray`/`Wireframe`).
-- **`maya_ux.convert_selection`** (`⌃+F9/F10/F11`), **`maya_ux.edge_loop_double_click`** (`LMB Double-Click` / `⇧+Double-Click` / `⌃+Double-Click` in Edge & Multi-Component modes), **`maya_ux.pick_walk`** (`↑↓←→`), **`maya_ux.toggle_soft_select`** (`B` + `⇧+[/]`), **`maya_ux.smart_delete`** (`⌫ Delete` dissolves interior edges keeping vertices; `⌘+⌫ Delete` removes vertices).
+- **`maya_ux.convert_selection`** (`⌃+F9/F10/F11`), **`maya_ux.edge_loop_double_click`** (`LMB Double-Click` / `⇧+Double-Click` / `⌃+Double-Click` in Edge & Multi-Component modes), **`maya_ux.pick_walk`** (`↑↓←→`), **`maya_ux.toggle_soft_select`** (`B` + `⇧+[/]`), **`maya_ux.smart_delete`** (`⌫ Delete` dissolves interior edges keeping vertices; `⌘+⌫ Delete` removes vertices), and **Maya Selection Wireframe on Shaded** (`maya_selected_wireframe`: renders polygon edges/divisions on selected meshes in Object Mode Shaded views while keeping deselected meshes clean).
 
 ---
 
@@ -72,7 +72,7 @@ Maya UX Pro is organized into **26 cleanly modular Python files** inside `maya_u
 ---
 
 ## 8. Modeling, Smooth Preview, Retopo, CamTools, Materials & I/O
-- **Modeling & Outliner** ([`ops_modeling.py`](../maya_ux_pro/ops_modeling.py), [`ops_modeling_pro.py`](../maya_ux_pro/ops_modeling_pro.py), [`ops_extrude.py`](../maya_ux_pro/ops_extrude.py), [`ops_outliner.py`](../maya_ux_pro/ops_outliner.py)): `Freeze Transforms`, `Delete History`, `Combine` / `Separate`, Maya Null **`Group`** (`⌘+G`), `Duplicate In-Place` / `+Transform` / `Duplicate Special`, interactive GPU **`Target Weld`**, **`Merge to Last`**, and **Maya Extrude Pro** (`maya_ux.maya_extrude` for Faces, Edges, Vertices & Curves with `Thickness`, `Local/World Translate`, `Offset`, `Divisions`, `Keep Faces Together`, `Taper`, `Twist`, Vertex `Length`/`Width`, and Show Manipulator).
+- **Modeling & Outliner** ([`ops_modeling.py`](../maya_ux_pro/ops_modeling.py), [`ops_modeling_pro.py`](../maya_ux_pro/ops_modeling_pro.py), [`ops_extrude.py`](../maya_ux_pro/ops_extrude.py), [`ops_outliner.py`](../maya_ux_pro/ops_outliner.py)): `Freeze Transforms`, `Delete History`, `Combine` / `Separate`, **`Add Divisions`** (`maya_ux.add_divisions` — Exponential/Linear, Quads/Triangles) & **`Smooth`** (`maya_ux.smooth_mesh` — Catmull-Clark mesh/face smoothing, Object Mode & Edit Mode via Object `RMB` Marking Menu, `⇧+RMB`, Hotbox, `Poly` Shelf & `N → Maya`), Maya Null **`Group`** (`⌘+G`), `Duplicate In-Place` / `+Transform` / `Duplicate Special`, interactive GPU **`Target Weld`**, **`Merge to Last`**, and **Maya Extrude Pro** (`maya_ux.maya_extrude` for Faces, Edges, Vertices & Curves with `Thickness`, `Local/World Translate`, `Offset`, `Divisions`, `Keep Faces Together`, `Taper`, `Twist`, Vertex `Length`/`Width`, and Show Manipulator).
 - **Smooth Preview** ([`ops_smooth.py`](../maya_ux_pro/ops_smooth.py)): `1` / `2` / `3` non-destructive `MayaSmoothPreview` Subsurf workflow + `PgUp` / `PgDn`.
 - **Retopo Pro** ([`ops_retopo.py`](../maya_ux_pro/ops_retopo.py)): **`Make Live`**, **`Quad Draw`** (auto `Shrinkwrap` + `Mirror` + `FACE_PROJECT` snap + Retopo overlay + `Poly Build`), **`Relax`**, **`Finish / Bake`**.
 - **CamTools Pro** ([`ops_camtools.py`](../maya_ux_pro/ops_camtools.py)): `Cam from View`, Lock Camera, `24/35/50/85mm` presets, `Fix Clip` (`0.01..10000`), DoF, Passepartout, Composition Guides, 4 per-scene Camera Bookmarks.

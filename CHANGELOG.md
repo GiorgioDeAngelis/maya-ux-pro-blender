@@ -2,6 +2,25 @@
 
 All notable changes to **Maya UX Pro** are documented in this file.
 
+## [2.8.6] - 2026-11-27
+### Added
+- **Maya Smooth (`maya_ux.smooth_mesh`, `ops_modeling.py`, `menus.py`)**:
+  - Added Maya's Catmull-Clark **`Smooth`** operator (`Mesh > Smooth`), working both in **Object Mode** (true Catmull-Clark subdivision preserving UVs, creases, boundaries, existing modifiers, and deduplicating linked instances) and **Edit Mode** (catmull-style subdivide + relax on selected faces while preserving selection on child faces).
+  - Placed directly alongside **`Add Divisions`** in **Object Mode `RMB` Marking Menu** (`VIEW3D_MT_maya_component_pie`), **Modeling Marking Menu `Shift+RMB`** (`VIEW3D_MT_maya_modeling_pie` in Object & Edit Mode), **Spacebar Hotbox**, **Top Shelf `Poly`**, **Channel Box**, and **Hotkey Reference**.
+
+## [2.8.5] - 2026-11-27
+### Added
+- **Maya Selection Wireframe on Shaded (`maya_selected_wireframe`, `ops_selection.py`, `preferences.py`)**:
+  - In Object Mode shaded views (`SOLID`, `MATERIAL`, `RENDERED`), **selected Mesh objects** now display their polygon edges/divisions overlaid in Maya's selection colors (`object_active` bright green for the active object, `object_selected` white for secondary selected objects) with zero z-fighting, while **deselected objects** render cleanly shaded with no wireframe clutter unless global `Wireframe on Shaded` (`⌥+5` / `Alt+5`) is toggled on.
+  - GPU `POST_VIEW` batch overlay (`POLYLINE_UNIFORM_COLOR`) with NumPy edge extraction, evaluated modifier support, and geometry-only depsgraph cache invalidation (zero rebuild cost during Move/Rotate/Scale transforms).
+
+## [2.8.4] - 2026-11-27
+### Added
+- **Maya Add Divisions (`maya_ux.add_divisions`, `ops_modeling.py`, `menus.py`)**:
+  - Added Maya's `Add Divisions` operator supporting both **Object Mode** (subdivides selected polygon meshes without distorting their silhouette, deduplicating linked multi-user mesh data and enforcing a 500k-face safety cap) and **Edit Mode** (subdivides only selected **Faces** cleanly while preserving selection on child faces via temporary BMesh tags, or linear-cuts selected **Edges**).
+  - Full Adjust Last Operation options matching Maya: **Method** (`Exponentially` `2^n` / `Linearly` `n` cuts), **Mode** (`Quads` / `Triangles` via grid fill + poke), **Divisions**, and **Smoothness** (`0.0` flat default).
+  - Exposed in **Object Mode `RMB` Marking Menu** (`VIEW3D_MT_maya_component_pie`), **Modeling Marking Menu `Shift+RMB`** (`VIEW3D_MT_maya_modeling_pie` in both Object & Edit Mode), **Spacebar Hotbox** (`Modeling & Pivot`), **Top Shelf `Poly` tab**, **Channel Box `Pivot & Modeling`**, and **Hotkey Reference** (`?` / `F1`).
+
 ## [2.8.3] - 2026-11-27
 ### Fixed
 - **Maya Extrude 3D Show Manipulator rebuilt on Blender native `transform.*` operators (`ops_extrude.py`)**:

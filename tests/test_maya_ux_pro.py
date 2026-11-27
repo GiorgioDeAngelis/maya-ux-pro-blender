@@ -1455,9 +1455,11 @@ def test_maya_spacebar_and_hotbox():
     assert "object.shade_smooth" in drawn_ops
     assert "object.shade_auto_smooth" in drawn_ops
     assert "object.shade_flat" in drawn_ops
+    assert "maya_ux.add_divisions" in drawn_ops
+    assert "maya_ux.smooth_mesh" in drawn_ops
     assert bpy.ops.maya_ux.create_maya_workspace(workspace_name="Maya Pro") == {"FINISHED"}
 
-    # 7b. Object Mode RMB Marking Menu exposes Shade Smooth, Shade Auto Smooth, Shade Flat, and Frame Selected
+    # 7b. Object Mode RMB Marking Menu exposes Shade Smooth, Shade Auto Smooth, Shade Flat, Add Divisions, Smooth, and Frame Selected
     from maya_ux_pro import menus
 
     cube = _reset_scene()
@@ -1467,7 +1469,21 @@ def test_maya_spacebar_and_hotbox():
     assert "object.shade_smooth" in drawn_ops
     assert "object.shade_auto_smooth" in drawn_ops
     assert "object.shade_flat" in drawn_ops
+    assert "maya_ux.add_divisions" in drawn_ops
+    assert "maya_ux.smooth_mesh" in drawn_ops
     assert "view3d.view_selected" in drawn_ops
+
+    # 7c. Modeling Marking Menu (Shift+RMB) exposes Add Divisions & Smooth in both Object Mode and Edit Mode
+    drawn_ops.clear()
+    menus.VIEW3D_MT_maya_modeling_pie.draw(fake_pie, bpy.context)
+    assert "maya_ux.add_divisions" in drawn_ops
+    assert "maya_ux.smooth_mesh" in drawn_ops
+    bpy.ops.object.mode_set(mode="EDIT")
+    drawn_ops.clear()
+    menus.VIEW3D_MT_maya_modeling_pie.draw(fake_pie, bpy.context)
+    assert "maya_ux.add_divisions" in drawn_ops
+    assert "maya_ux.smooth_mesh" in drawn_ops
+    bpy.ops.object.mode_set(mode="OBJECT")
     assert bpy.ops.object.shade_smooth() == {"FINISHED"}
     assert all(p.use_smooth for p in cube.data.polygons)
     assert bpy.ops.object.shade_auto_smooth() == {"FINISHED"}
@@ -1999,6 +2015,9 @@ def test_unregistration():
     assert "bl_rna" not in ops_viewport.VIEW3D_GGT_maya_center_scale.__dict__
     assert "bl_rna" not in ops_viewport.VIEW3D_GT_maya_center_scale_cube.__dict__
     assert ops_selection._SELECTED_VERT_DRAW_HANDLE is None
+    assert ops_selection._SELECTED_WIRE_DRAW_HANDLE is None
+    assert len(ops_selection._SELECTED_WIRE_CACHE) == 0
+    assert ops_selection._on_load_pre_selection_cache not in bpy.app.handlers.load_pre
     assert ops_selection._on_component_display_depsgraph not in bpy.app.handlers.depsgraph_update_post
     assert len(ops_selection._SAVED_COMPONENT_COLORS) == 0
     assert len(ops_selection._GROW_HISTORY) == 0
@@ -2024,12 +2043,228 @@ def test_unregistration():
     print("[PASS] unregistration")
 
 
+def test_add_divisions():
+    # 1. Object Mode Exponential Quads (divisions=1 -> 24 faces, 26 verts, preserved [-1, 1]^3 bounds)
+    cube = _reset_scene()
+    assert bpy.ops.maya_ux.add_divisions(method="EXPONENTIAL", subdivide_mode="QUADS", divisions=1, smoothness=0.0) == {"FINISHED"}
+    assert len(cube.data.polygons) == 24
+    assert len(cube.data.vertices) == 26
+    for v in cube.data.vertices:
+        assert max(abs(v.co.x), abs(v.co.y), abs(v.co.z)) <= 1.0 + 1e-5
+
+    # Exponential Quads divisions=2 from fresh Cube -> 96 faces, 98 verts
+    cube = _reset_scene()
+    assert bpy.ops.maya_ux.add_divisions(method="EXPONENTIAL", subdivide_mode="QUADS", divisions=2, smoothness=0.0) == {"FINISHED"}
+    assert len(cube.data.polygons) == 96
+    assert len(cube.data.vertices) == 98
+
+    # 2. Object Mode Linear Quads divisions=2 (2 cuts = 3x3 per face = 54 faces)
+    cube = _reset_scene()
+    assert bpy.ops.maya_ux.add_divisions(method="LINEAR", subdivide_mode="QUADS", divisions=2, smoothness=0.0) == {"FINISHED"}
+    assert len(cube.data.polygons) == 54
+
+    # 3. Object Mode Triangles (divisions=1 -> 24 tris; divisions=2 Exponential -> 96 tris)
+    cube = _reset_scene()
+    assert bpy.ops.maya_ux.add_divisions(method="EXPONENTIAL", subdivide_mode="TRIANGLES", divisions=1) == {"FINISHED"}
+    assert len(cube.data.polygons) == 24
+    assert all(len(p.vertices) == 3 for p in cube.data.polygons)
+
+    cube = _reset_scene()
+    assert bpy.ops.maya_ux.add_divisions(method="EXPONENTIAL", subdivide_mode="TRIANGLES", divisions=2) == {"FINISHED"}
+    assert len(cube.data.polygons) == 96
+    assert all(len(p.vertices) == 3 for p in cube.data.polygons)
+
+    # 4. Linked multi-user deduplication: 2 linked instances -> subdivided once (24 faces, not 96)
+    cube = _reset_scene()
+    assert bpy.ops.maya_ux.duplicate_special(copies=1, linked=True, offset_loc=(4.0, 0.0, 0.0)) == {"FINISHED"}
+    for obj in bpy.data.objects:
+        if obj.type == "MESH":
+            obj.select_set(True)
+    assert bpy.ops.maya_ux.add_divisions(method="EXPONENTIAL", subdivide_mode="QUADS", divisions=1) == {"FINISHED"}
+    assert len(cube.data.polygons) == 24
+
+    # 5. Edit Mode single face Quads & Triangles (neighbors stay untouched)
+    cube = _reset_scene()
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_mode(type="FACE")
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bm = bmesh.from_edit_mesh(cube.data)
+    bm.faces.ensure_lookup_table()
+    bm.faces[0].select_set(True)
+    bm.select_flush(True)
+    bmesh.update_edit_mesh(cube.data)
+    assert bpy.ops.maya_ux.add_divisions(method="EXPONENTIAL", subdivide_mode="QUADS", divisions=1) == {"FINISHED"}
+    bm = bmesh.from_edit_mesh(cube.data)
+    assert len(bm.faces) == 9
+    assert sum(1 for f in bm.faces if f.select) == 4
+
+    bpy.ops.object.mode_set(mode="OBJECT")
+    cube = _reset_scene()
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_mode(type="FACE")
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bm = bmesh.from_edit_mesh(cube.data)
+    bm.faces.ensure_lookup_table()
+    bm.faces[0].select_set(True)
+    bm.select_flush(True)
+    bmesh.update_edit_mesh(cube.data)
+    assert bpy.ops.maya_ux.add_divisions(method="EXPONENTIAL", subdivide_mode="TRIANGLES", divisions=2) == {"FINISHED"}
+    bm = bmesh.from_edit_mesh(cube.data)
+    assert len(bm.faces) == 21
+    assert sum(1 for f in bm.faces if f.select) == 16
+
+    # 6. Edit Mode single edge Linear cuts=2 -> 10 verts, 6 faces, 3 selected edges
+    bpy.ops.object.mode_set(mode="OBJECT")
+    cube = _reset_scene()
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_mode(type="EDGE")
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bm = bmesh.from_edit_mesh(cube.data)
+    bm.edges.ensure_lookup_table()
+    bm.edges[0].select_set(True)
+    bm.select_flush(True)
+    bmesh.update_edit_mesh(cube.data)
+    assert bpy.ops.maya_ux.add_divisions(method="LINEAR", subdivide_mode="QUADS", divisions=2) == {"FINISHED"}
+    bm = bmesh.from_edit_mesh(cube.data)
+    assert len(bm.verts) == 10
+    assert len(bm.faces) == 6
+    assert sum(1 for e in bm.edges if e.select) == 3
+
+    # 7. Edit Mode empty selection -> CANCELLED
+    bpy.ops.mesh.select_all(action="DESELECT")
+    assert bpy.ops.maya_ux.add_divisions() == {"CANCELLED"}
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    # 8. poll() is False when only non-mesh object is selected
+    _reset_scene()
+    bpy.ops.object.select_all(action="DESELECT")
+    bpy.ops.object.empty_add()
+    assert not bpy.ops.maya_ux.add_divisions.poll()
+    assert not bpy.ops.maya_ux.smooth_mesh.poll()
+
+    # 9. Smooth Mesh (Catmull-Clark) in Object Mode & Edit Mode
+    cube = _reset_scene()
+    cube.modifiers.new(name="KeepBevelMod", type="BEVEL")
+    assert len(cube.data.uv_layers) >= 1
+    obj_count_before = len(bpy.data.objects)
+    assert bpy.ops.maya_ux.smooth_mesh(divisions=1) == {"FINISHED"}
+    assert len(cube.data.polygons) == 24
+    assert len(cube.data.vertices) == 26
+    assert max(v.co.length for v in cube.data.vertices) < 1.0
+    assert len(cube.data.uv_layers) >= 1
+    assert [m.name for m in cube.modifiers] == ["KeepBevelMod"]
+    assert len(bpy.data.objects) == obj_count_before
+    assert not any(o.name.startswith("_maya_smooth_tmp") for o in bpy.data.objects)
+
+    cube = _reset_scene()
+    assert bpy.ops.maya_ux.smooth_mesh(divisions=2) == {"FINISHED"}
+    assert len(cube.data.polygons) == 96
+    assert len(cube.data.vertices) == 98
+
+    # Linked multi-user deduplication for Smooth Mesh
+    cube = _reset_scene()
+    assert bpy.ops.maya_ux.duplicate_special(copies=1, linked=True, offset_loc=(4.0, 0.0, 0.0)) == {"FINISHED"}
+    for obj in bpy.data.objects:
+        if obj.type == "MESH":
+            obj.select_set(True)
+    assert bpy.ops.maya_ux.smooth_mesh(divisions=1) == {"FINISHED"}
+    assert len(cube.data.polygons) == 24
+
+    # Edit Mode single face Smooth & empty selection -> CANCELLED
+    cube = _reset_scene()
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_mode(type="FACE")
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bm = bmesh.from_edit_mesh(cube.data)
+    bm.faces.ensure_lookup_table()
+    bm.faces[0].select_set(True)
+    bm.select_flush(True)
+    bmesh.update_edit_mesh(cube.data)
+    assert bpy.ops.maya_ux.smooth_mesh(divisions=1) == {"FINISHED"}
+    bm = bmesh.from_edit_mesh(cube.data)
+    assert len(bm.faces) == 9
+    assert sum(1 for f in bm.faces if f.select) == 4
+    bpy.ops.mesh.select_all(action="DESELECT")
+    assert bpy.ops.maya_ux.smooth_mesh(divisions=1) == {"CANCELLED"}
+    bpy.ops.object.mode_set(mode="OBJECT")
+    print("[PASS] add_divisions")
+
+
+def test_maya_selection_wireframe_on_shaded():
+    from mathutils import Matrix
+    from maya_ux_pro import ops_selection, preferences
+
+    prefs = preferences.get_prefs()
+    assert bool(getattr(prefs, "maya_selected_wireframe", False)) is True
+
+    cube1 = _reset_scene()
+    targets = ops_selection.collect_selected_wireframe_meshes(bpy.context)
+    assert targets == [(cube1, True)], f"Expected [(cube1, True)], got {targets}"
+
+    # Two selected meshes: secondary first (is_active=False), active last (is_active=True)
+    bpy.ops.mesh.primitive_cube_add(location=(4.0, 0.0, 0.0))
+    cube2 = bpy.context.active_object
+    cube1.select_set(True)
+    cube2.select_set(True)
+    bpy.context.view_layer.objects.active = cube1
+    targets2 = ops_selection.collect_selected_wireframe_meshes(bpy.context)
+    assert targets2 == [(cube2, False), (cube1, True)], f"Unexpected ordering: {targets2}"
+
+    # Deselected -> clean shaded (empty list)
+    bpy.ops.object.select_all(action="DESELECT")
+    assert ops_selection.collect_selected_wireframe_meshes(bpy.context) == []
+
+    # Edit Mode -> handled by Edit Mesh overlay, not Object Mode wireframe overlay
+    cube1.select_set(True)
+    bpy.context.view_layer.objects.active = cube1
+    bpy.ops.object.mode_set(mode="EDIT")
+    assert ops_selection.collect_selected_wireframe_meshes(bpy.context) == []
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    # Disabled preference -> empty list (then restore True)
+    try:
+        prefs.maya_selected_wireframe = False
+        assert ops_selection.collect_selected_wireframe_meshes(bpy.context) == []
+    finally:
+        prefs.maya_selected_wireframe = True
+
+    # NumPy wireframe extraction before and after Add Divisions
+    arrays = ops_selection.extract_mesh_wireframe_arrays(cube1)
+    assert arrays is not None
+    verts, edges = arrays
+    assert verts.shape == (8, 3) and edges.shape == (12, 2)
+    assert bpy.ops.maya_ux.add_divisions(method="EXPONENTIAL", subdivide_mode="QUADS", divisions=1) == {"FINISHED"}
+    arrays_div = ops_selection.extract_mesh_wireframe_arrays(cube1)
+    assert arrays_div is not None
+    assert arrays_div[0].shape == (26, 3) and arrays_div[1].shape == (48, 2)
+
+    # Depth bias: Perspective scales proj[2][3] by 1/(1-persp_bias), Ortho offsets linearly
+    persp = Matrix.Identity(4)
+    persp[2][2] = -1.00002
+    persp[2][3] = -0.02
+    persp[3][2] = -1.0
+    persp[3][3] = 0.0
+    b_persp = ops_selection._biased_projection_matrix(persp)
+    assert abs(b_persp[2][3] - (-0.02 / (1.0 - 2.0e-3))) < 1e-7
+    z_solid = (persp[2][2] * -10.0 + persp[2][3]) / 10.0
+    z_front_wire = (b_persp[2][2] * -10.0 + b_persp[2][3]) / 10.0
+    z_back_wire = (b_persp[2][2] * -12.0 + b_persp[2][3]) / 12.0
+    assert z_front_wire < z_solid < z_back_wire
+
+    ortho = Matrix.Identity(4)
+    b_ortho = ops_selection._biased_projection_matrix(ortho)
+    assert abs(b_ortho[2][3] - (-2.0e-5)) < 1e-8
+    print("[PASS] maya_selection_wireframe_on_shaded")
+
+
 if __name__ == "__main__":
     test_registration_and_keymap_safety()
     test_setup_manager_roundtrip()
     test_smooth_preview()
     test_pivot_and_snap()
     test_modeling_duplication_and_outliner()
+    test_add_divisions()
+    test_maya_selection_wireframe_on_shaded()
     test_selection_pickwalk_soft_and_delete()
     test_viewport_hide_bg_increment_save_and_cam_history()
     test_animation_and_uv()

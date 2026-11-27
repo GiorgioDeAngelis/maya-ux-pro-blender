@@ -138,6 +138,9 @@ class MAYA_UX_PT_transform_pivot(bpy.types.Panel):
         row2 = mod_col.row(align=True)
         row2.operator("maya_ux.combine", text="Combine")
         row2.operator("maya_ux.separate", text="Separate")
+        row2b = mod_col.row(align=True)
+        row2b.operator("maya_ux.add_divisions", text="Add Divisions", icon="MESH_GRID")
+        row2b.operator("maya_ux.smooth_mesh", text="Smooth", icon="MOD_SUBSURF")
 
         cmd_lbl = "⌘" if is_macos_layout(context) else "Ctrl+"
         sh_lbl = "⇧" if is_macos_layout(context) else "Shift+"

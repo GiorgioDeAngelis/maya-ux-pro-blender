@@ -5,11 +5,12 @@ from math import hypot
 import bmesh
 import bpy
 import gpu
+import numpy as np
 from bpy.app.handlers import persistent
 from bpy.props import BoolProperty, EnumProperty, FloatProperty
 from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 from .preferences import get_prefs
 
@@ -21,7 +22,11 @@ _SAVED_COMPONENT_COLORS: dict[str, tuple] = {}
 _LAST_COMPONENT_DISPLAY_KEY: tuple | None = None
 _MSGBUS_OWNER = object()
 _SELECTED_VERT_DRAW_HANDLE = None
+_SELECTED_WIRE_DRAW_HANDLE = None
+_SELECTED_WIRE_CACHE: dict[int, tuple[tuple, object]] = {}
+_SELECTED_WIRE_CACHE_GEN: int = 0
 _MAX_GROW_HISTORY = 64
+_MAX_SELECTED_WIRE_EDGES = 250_000
 
 _DEFAULT_COMPONENT_FALLBACKS = {
     "edge_select": (1.0, 0.6, 0.0),
@@ -140,9 +145,23 @@ def sync_component_selection_display(context=None, force: bool = False):
     _tag_view3d_redraw(ctx)
 
 
+def invalidate_selected_wireframe_cache():
+    """Clear cached GPU wireframe batches for selected Object Mode meshes."""
+    global _SELECTED_WIRE_CACHE_GEN
+    _SELECTED_WIRE_CACHE.clear()
+    _SELECTED_WIRE_CACHE_GEN += 1
+
+
+@persistent
+def _on_load_pre_selection_cache(*_args):
+    invalidate_selected_wireframe_cache()
+
+
 @persistent
 def _on_component_display_depsgraph(scene, depsgraph=None):
     sync_component_selection_display(bpy.context)
+    if depsgraph is None or any(getattr(upd, "is_updated_geometry", False) for upd in depsgraph.updates):
+        invalidate_selected_wireframe_cache()
 
 
 def collect_selected_vertex_world_coords(context) -> tuple[list[Vector], Vector | None]:
@@ -233,6 +252,186 @@ def _draw_selected_vertices_overlay():
             batch_for_shader(shader, "POINTS", {"pos": [active_pt]}).draw(shader)
     finally:
         gpu.state.point_size_set(1.0)
+        gpu.state.depth_test_set("NONE")
+        gpu.state.depth_mask_set(True)
+        gpu.state.blend_set("NONE")
+
+
+def collect_selected_wireframe_meshes(context) -> list[tuple[bpy.types.Object, bool]]:
+    """Return selected visible Mesh objects in Object Mode ordered [(obj, is_active)], active last."""
+    if getattr(context, "mode", "") != "OBJECT":
+        return []
+    if not bool(getattr(get_prefs(context), "maya_selected_wireframe", True)):
+        return []
+    space = getattr(context, "space_data", None)
+    if space is not None:
+        if not getattr(space.overlay, "show_overlays", True):
+            return []
+        if getattr(space.shading, "type", "SOLID") == "WIREFRAME":
+            return []
+
+    selected = getattr(context, "selected_objects", ()) or ()
+    active = getattr(context, "active_object", None)
+    secondary: list[tuple[bpy.types.Object, bool]] = []
+    active_entry: list[tuple[bpy.types.Object, bool]] = []
+
+    for obj in selected:
+        if (
+            obj is None
+            or obj.type != "MESH"
+            or obj.data is None
+            or obj.hide_viewport
+            or obj.display_type in {"WIRE", "BOUNDS"}
+        ):
+            continue
+        try:
+            if not obj.visible_get():
+                continue
+        except Exception:
+            pass
+        if obj == active:
+            active_entry.append((obj, True))
+        else:
+            secondary.append((obj, False))
+
+    return secondary + active_entry
+
+
+def extract_mesh_wireframe_arrays(
+    obj: bpy.types.Object, depsgraph=None
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Extract (verts_float32, edge_indices_int32) for a Mesh object without mutating scene data."""
+    if obj is None or obj.type != "MESH" or obj.data is None:
+        return None
+
+    use_eval = len(obj.modifiers) > 0 and depsgraph is not None
+    ev_obj = None
+    me = None
+    try:
+        if use_eval:
+            ev_obj = obj.evaluated_get(depsgraph)
+            me = ev_obj.to_mesh()
+        else:
+            me = obj.data
+
+        if me is None:
+            return None
+        nv = len(me.vertices)
+        ne = len(me.edges)
+        if nv == 0 or ne == 0 or ne > _MAX_SELECTED_WIRE_EDGES:
+            return None
+
+        verts = np.empty(nv * 3, dtype=np.float32)
+        me.vertices.foreach_get("co", verts)
+        verts = verts.reshape((nv, 3))
+
+        edges = np.empty(ne * 2, dtype=np.int32)
+        me.edges.foreach_get("vertices", edges)
+        edges = edges.reshape((ne, 2))
+        return verts, edges
+    finally:
+        if ev_obj is not None:
+            ev_obj.to_mesh_clear()
+
+
+def _get_selected_wire_batch(obj: bpy.types.Object, depsgraph, shader, shader_name: str):
+    key = (_SELECTED_WIRE_CACHE_GEN, obj.data.as_pointer(), len(obj.modifiers), shader_name)
+    ptr = obj.as_pointer()
+    cached = _SELECTED_WIRE_CACHE.get(ptr)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+
+    arrays = extract_mesh_wireframe_arrays(obj, depsgraph)
+    if arrays is None:
+        return None
+    verts, edges = arrays
+    batch = batch_for_shader(shader, "LINES", {"pos": verts}, indices=edges)
+    if len(_SELECTED_WIRE_CACHE) > 256:
+        _SELECTED_WIRE_CACHE.clear()
+    _SELECTED_WIRE_CACHE[ptr] = (key, batch)
+    return batch
+
+
+def _biased_projection_matrix(
+    proj: Matrix, persp_bias: float = 2.0e-3, ortho_bias: float = 2.0e-5
+) -> Matrix:
+    """Pull wireframe depth slightly toward camera without z-fighting or back-face bleed-through.
+
+    In Perspective (`proj[3][2] != 0`), dividing `proj[2][3]` by `(1 - persp_bias)` is
+    algebraically equivalent to pulling every vertex `persp_bias` (0.2%) closer along its exact
+    eye ray: 0.0 px screen shift, independent of `clip_start`, and occluded faces stay behind.
+    In Orthographic (`proj[3][2] == 0`), depth is linear so subtracting `ortho_bias` from
+    `proj[2][3]` gives a small constant depth offset.
+    """
+    biased = proj.copy()
+    if abs(float(biased[3][2])) > 1e-6:
+        biased[2][3] = float(biased[2][3]) / (1.0 - persp_bias)
+    else:
+        biased[2][3] = float(biased[2][3]) - ortho_bias
+    return biased
+
+
+def _draw_selected_object_wireframe_overlay():
+    """Draw wireframe divisions on selected Mesh objects in Shaded views (hidden when deselected)."""
+    if bpy.app.background:
+        return
+    ctx = bpy.context
+    targets = collect_selected_wireframe_meshes(ctx)
+    if not targets:
+        return
+    space = getattr(ctx, "space_data", None)
+    if space is None:
+        return
+
+    show_xray = bool(getattr(space.shading, "show_xray", False))
+    try:
+        shader = gpu.shader.from_builtin("POLYLINE_UNIFORM_COLOR")
+        shader_name = "POLYLINE"
+    except ValueError:
+        shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+        shader_name = "UNIFORM"
+
+    v3d = ctx.preferences.themes[0].view_3d
+    act_rgb = tuple(float(c) for c in v3d.object_active[:3])
+    sel_rgb = tuple(float(c) for c in v3d.object_selected[:3])
+    alpha_act = 0.60 if show_xray else 0.95
+    alpha_sel = 0.55 if show_xray else 0.90
+    px_scale = max(1.0, float(getattr(ctx.preferences.system, "pixel_size", 1.0)))
+    line_w = 1.15 * px_scale
+    depsgraph = ctx.evaluated_depsgraph_get()
+
+    try:
+        gpu.state.blend_set("ALPHA")
+        gpu.state.depth_mask_set(False)
+        gpu.state.depth_test_set("NONE" if show_xray else "LESS_EQUAL")
+        with gpu.matrix.push_pop_projection():
+            if not show_xray:
+                gpu.matrix.load_projection_matrix(
+                    _biased_projection_matrix(gpu.matrix.get_projection_matrix())
+                )
+            shader.bind()
+            if shader_name == "POLYLINE":
+                vp = gpu.state.viewport_get()
+                shader.uniform_float("viewportSize", (float(vp[2]), float(vp[3])))
+                shader.uniform_float("lineWidth", line_w)
+            else:
+                gpu.state.line_width_set(line_w)
+
+            for obj, is_active in targets:
+                batch = _get_selected_wire_batch(obj, depsgraph, shader, shader_name)
+                if batch is None:
+                    continue
+                rgba = (
+                    (act_rgb[0], act_rgb[1], act_rgb[2], alpha_act)
+                    if is_active
+                    else (sel_rgb[0], sel_rgb[1], sel_rgb[2], alpha_sel)
+                )
+                shader.uniform_float("color", rgba)
+                with gpu.matrix.push_pop():
+                    gpu.matrix.multiply_matrix(obj.matrix_world)
+                    batch.draw(shader)
+    finally:
+        gpu.state.line_width_set(1.0)
         gpu.state.depth_test_set("NONE")
         gpu.state.depth_mask_set(True)
         gpu.state.blend_set("NONE")
@@ -1959,7 +2158,7 @@ CLASSES = (
 
 
 def register():
-    global _SELECTED_VERT_DRAW_HANDLE
+    global _SELECTED_VERT_DRAW_HANDLE, _SELECTED_WIRE_DRAW_HANDLE
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     sync_face_center_overlay(bool(getattr(get_prefs(), "maya_face_center_select", True)))
@@ -1977,22 +2176,35 @@ def register():
     )
     if _on_component_display_depsgraph not in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.append(_on_component_display_depsgraph)
+    if _on_load_pre_selection_cache not in bpy.app.handlers.load_pre:
+        bpy.app.handlers.load_pre.append(_on_load_pre_selection_cache)
     if _SELECTED_VERT_DRAW_HANDLE is not None:
         bpy.types.SpaceView3D.draw_handler_remove(_SELECTED_VERT_DRAW_HANDLE, "WINDOW")
     _SELECTED_VERT_DRAW_HANDLE = bpy.types.SpaceView3D.draw_handler_add(
         _draw_selected_vertices_overlay, (), "WINDOW", "POST_VIEW"
     )
+    if _SELECTED_WIRE_DRAW_HANDLE is not None:
+        bpy.types.SpaceView3D.draw_handler_remove(_SELECTED_WIRE_DRAW_HANDLE, "WINDOW")
+    _SELECTED_WIRE_DRAW_HANDLE = bpy.types.SpaceView3D.draw_handler_add(
+        _draw_selected_object_wireframe_overlay, (), "WINDOW", "POST_VIEW"
+    )
     sync_component_selection_display(force=True)
 
 
 def unregister():
-    global _SELECTED_VERT_DRAW_HANDLE
+    global _SELECTED_VERT_DRAW_HANDLE, _SELECTED_WIRE_DRAW_HANDLE
+    if _SELECTED_WIRE_DRAW_HANDLE is not None:
+        bpy.types.SpaceView3D.draw_handler_remove(_SELECTED_WIRE_DRAW_HANDLE, "WINDOW")
+        _SELECTED_WIRE_DRAW_HANDLE = None
     if _SELECTED_VERT_DRAW_HANDLE is not None:
         bpy.types.SpaceView3D.draw_handler_remove(_SELECTED_VERT_DRAW_HANDLE, "WINDOW")
         _SELECTED_VERT_DRAW_HANDLE = None
     bpy.msgbus.clear_by_owner(_MSGBUS_OWNER)
+    if _on_load_pre_selection_cache in bpy.app.handlers.load_pre:
+        bpy.app.handlers.load_pre.remove(_on_load_pre_selection_cache)
     if _on_component_display_depsgraph in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(_on_component_display_depsgraph)
+    invalidate_selected_wireframe_cache()
     restore_component_selection_display()
     _SAVED_COMPONENT_COLORS.clear()
     sync_face_center_overlay(False)
